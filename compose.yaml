@@ -1,0 +1,47 @@
+# Local deployment reference. Docker/PostgreSQL/Redis path must be validated on your machine.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: supplypilot
+      POSTGRES_USER: supplypilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U supplypilot]
+      interval: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+  app:
+    build: .
+    environment: &application
+      DATABASE_URL: postgresql+psycopg://supplypilot:${POSTGRES_PASSWORD}@db:5432/supplypilot
+      DATA_DIR: /app/data
+      REDIS_URL: redis://redis:6379/0
+      APP_MODE: local
+      AUTH_MODE: local
+      TOKEN_SECRET: ${TOKEN_SECRET:?Set a unique TOKEN_SECRET}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?Set your local DEMO_PASSWORD}
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: [files:/app/data]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+  worker:
+    build: .
+    profiles: [workers]
+    environment: *application
+    volumes: [files:/app/data]
+    command: [celery, -A, supplypilot.worker:celery, worker, --loglevel=info, --concurrency=1]
+    depends_on: [db, redis]
+  scheduler:
+    build: .
+    profiles: [workers]
+    environment: *application
+    volumes: [files:/app/data]
+    command: [celery, -A, supplypilot.worker:celery, beat, --loglevel=info, --schedule=/app/data/celerybeat-schedule]
+    depends_on: [db, redis]
+volumes:
+  pgdata:
+  files:

@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: supplypilot_dev_admin
+      POSTGRES_PASSWORD: ${SUPPLYPILOT_DB_PASSWORD:?Database password required}
+      POSTGRES_DB: supplypilot_dev
+    ports:
+      - "127.0.0.1::5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supplypilot_dev_admin -d supplypilot_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_dev_data:
+

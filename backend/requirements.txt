@@ -1,0 +1,15 @@
+fastapi==0.162.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.6
+psycopg[binary]==3.3.6
+PyJWT[crypto]==2.15.1
+python-multipart==0.0.32
+langgraph==1.2.18
+celery[redis]==5.6.3
+pypdf==6.21.3
+httpx==0.28.1
+pytest==9.2.0
+ortools==9.15.6755
+alembic==1.20.1
+Mako==1.4.3
+MarkupSafe==3.0.4
