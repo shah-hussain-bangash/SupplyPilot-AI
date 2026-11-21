@@ -21,6 +21,12 @@
 
 [Business problem](#1-business-problem-and-objectives) · [Architecture](#3-solution-architecture) · [Optimization](#4-sourcing-optimization-and-independent-checking) · [Controlled purchasing](#5-approval-execution-and-uncertain-outcomes) · [Security](#8-security-and-governance) · [Evidence](#10-engineering-evidence-and-reproducibility) · [Walkthrough](#12-technical-walkthrough-and-next-delivery-gates)
 
+### Application view
+
+![SupplyPilot AI current public website](assets/supplypilot-current-home.png)
+
+*Captured from the running local public website on 21 November 2026. The image shows the current buyer/supplier entry points and service positioning; the logistics photograph is illustrative brand imagery. This is an interface record, not evidence of a live purchasing integration or production deployment.*
+
 ## 1. Business problem and objectives
 
 A buyer must do more than select the lowest quoted unit price. Available stock, reserved stock, confirmed inbound supply, technical requirements, certificates, supplier capacity, minimum order quantities, pack sizes, delivery dates and freight can change the preferred allocation. An approved plan can also become stale before a purchase is dispatched.
