@@ -17,6 +17,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--docker',action='store_true',required=True,
                         help='Create and remove a dedicated PostgreSQL 17 container')
+    parser.add_argument('--concurrency',action='store_true',help='Prove overlapping execution, reconciliation, receipt and invoice requests')
     parser.add_argument('--repository',type=Path,default=Path(__file__).resolve().parents[1])
     parser.add_argument('--report',type=Path)
     args=parser.parse_args()
@@ -73,6 +74,7 @@ def main():
                                   ('supplypilot_migrator',migrator_password)):
                 admin.execute(pgsql.SQL('CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS').format(
                     pgsql.Identifier(role),pgsql.Literal(password)))
+            admin.execute("ALTER ROLE supplypilot_app SET lock_timeout TO '15s'")
             admin.execute('GRANT CONNECT ON DATABASE supplypilot_dev TO supplypilot_app,supplypilot_migrator')
             admin.execute('GRANT USAGE ON SCHEMA public TO supplypilot_app')
             admin.execute('GRANT USAGE,CREATE ON SCHEMA public TO supplypilot_migrator')
@@ -137,7 +139,9 @@ def main():
             from supplypilot.main import app
             from postgres_acceptance_cases import workflow,read_checks
             with TestClient(app) as client:
-                case=workflow(client,portal_password,check)
+                from postgres_concurrency_cases import build_race
+                race=build_race(check,sql) if args.concurrency else None
+                case=workflow(client,portal_password,check,race=race)
                 baseline=row_hashes()
                 read_checks(client,portal_password,check,sql,'supplypilot_dev')
                 check(row_hashes()==baseline,'Read probes restore every synthetic checkpoint row')
@@ -148,11 +152,24 @@ def main():
                   'Receipt ledger retains 55 accepted pieces')
             check(sql('supplypilot_dev',f"SELECT count(*),sum(quantity) FROM proc_invoices WHERE order_id='{oid}' AND status='matched'")=='2|55',
                   'Invoice ledger retains two matched invoices for 55 pieces')
+            if args.concurrency:
+                iid=case['intent_id']
+                check(sql('supplypilot_dev',f"SELECT count(*) FROM outbox WHERE id='{iid}' AND state='confirmed'")=='1',
+                      'Concurrent execution retains exactly one confirmed intent')
+                check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_orders WHERE intent_id='{iid}'")=='1',
+                      'Concurrent reconciliation creates exactly one order projection')
+                check(sql('supplypilot_dev',f"SELECT count(*) FROM audit WHERE action='order.created' AND resource='{oid}'")=='1',
+                      'Concurrent reconciliation records one order-created audit event')
+                check(sql('supplypilot_dev',f"SELECT count(*) FROM audit WHERE action='order.receipt_recorded' AND resource='{oid}'")=='2',
+                      'Rejected receipt request adds no extra receipt audit event')
+                check(sql('supplypilot_dev',f"SELECT count(*) FROM audit WHERE action='order.invoice_reviewed' AND resource='{oid}'")=='2',
+                      'Rejected invoice request adds no extra invoice audit event')
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
                 'checks':passed,'revision':'0007_proc_fulfillment',
-                'database_scope':'new disposable PostgreSQL 17 container; synthetic data only'},indent=2),encoding='utf-8')
+                'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
+                'concurrency_checked':args.concurrency},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
