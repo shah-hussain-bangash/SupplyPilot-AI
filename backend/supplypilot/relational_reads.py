@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer', 'order') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False):
@@ -18,6 +18,16 @@ def _query(kind, user, single=False):
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'receipt':
+        fields = """h.order_id,h.allocation_index,h.expected_order_revision AS expected_revision,
+          h.supplier_id,h.sku,h.accepted,h.rejected,h.quarantine,h.evidence_id,h.received_at AS at"""
+        table = 'proc_receipts'
+    elif kind == 'invoice':
+        fields = """h.order_id,h.allocation_index,h.expected_order_revision AS expected_revision,
+          h.supplier_id,h.invoice_number,h.quantity,h.unit_price::text AS unit_price,
+          h.evidence_id,h.status,h.tolerance,h.match_checks,h.assessment_history,
+          h.rechecked_by,h.recheck_reason,h.rechecked_at"""
+        table = 'proc_invoices'
     elif kind == 'order':
         fields = """h.rfq_id,h.plan_id,h.intent_id,h.external_id,h.status,
           h.total::text AS total,h.currency,h.simulated,h.closed_at,
@@ -51,7 +61,7 @@ def _query(kind, user, single=False):
     if user.role == 'supplier' and kind == 'offer':
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind in ('supplier','order') else """ AND EXISTS
+        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
     return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,r.data,
@@ -73,6 +83,21 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'receipt':
+        for key in ('order_id','allocation_index','expected_revision','supplier_id','sku',
+                    'accepted','rejected','quarantine','evidence_id'):
+            field(key,deepcopy(row[key]))
+        value=row['at']
+        field('at',value.isoformat() if hasattr(value,'isoformat') else value)
+    elif row['kind'] == 'invoice':
+        for key in ('order_id','allocation_index','expected_revision','supplier_id','invoice_number',
+                    'quantity','unit_price','evidence_id','status','tolerance','match_checks'):
+            field(key,deepcopy(row[key]))
+        # Older invoices omitted these optional fields and the empty history default.
+        for key in ('assessment_history','rechecked_by','recheck_reason','rechecked_at'):
+            if key in data:
+                value=deepcopy(row[key])
+                data[key]=value.isoformat() if hasattr(value,'isoformat') else value
     elif row['kind'] == 'order':
         if len(row['lines']) != len(data.get('lines', [])):
             raise HTTPException(503, {'code':'projection_not_ready',
@@ -137,7 +162,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer','order'):return None
+    if kind not in ('supplier','rfq','offer','order','receipt','invoice'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
