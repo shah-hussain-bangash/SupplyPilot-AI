@@ -1,0 +1,163 @@
+{
+  "source_commit": "8d983bb07fd640bd4c548dff09f28f837992e6d4",
+  "source_reference": "backend/tests/test_solver.py",
+  "recorded_at_utc": "2026-11-21T08:09:16.721165+00:00",
+  "environment": {
+    "python": "3.14.8",
+    "platform": "Windows"
+  },
+  "scope": "Independent exhaustive enumeration of the committed small test formulation. No application or CP-SAT execution in this local replay.",
+  "assumptions": {
+    "currency": "AED",
+    "unit": "piece",
+    "available_stock": 0,
+    "budget_cents": 100000,
+    "offer_a": {
+      "capacity": 8,
+      "unit_price_cents": 400,
+      "fixed_freight_cents": 800,
+      "moq": 2,
+      "pack_size": 2
+    },
+    "offer_b": {
+      "capacity": 10,
+      "unit_price_cents": 500,
+      "fixed_freight_cents": 0,
+      "moq": 1,
+      "pack_size": 1
+    },
+    "per_piece_freight_cents": 0,
+    "eligibility_and_dates": "Assumed valid as in the prepared solver fixture; not independently evaluated here."
+  },
+  "reference_cases": [
+    {
+      "need": 3,
+      "feasible_allocations": 2,
+      "minimum_cost_cents": 1500,
+      "minimizers": [
+        {
+          "offer_a_quantity": 0,
+          "offer_b_quantity": 3,
+          "cost_cents": 1500
+        }
+      ]
+    },
+    {
+      "need": 5,
+      "feasible_allocations": 3,
+      "minimum_cost_cents": 2500,
+      "minimizers": [
+        {
+          "offer_a_quantity": 0,
+          "offer_b_quantity": 5,
+          "cost_cents": 2500
+        }
+      ]
+    },
+    {
+      "need": 8,
+      "feasible_allocations": 5,
+      "minimum_cost_cents": 4000,
+      "minimizers": [
+        {
+          "offer_a_quantity": 0,
+          "offer_b_quantity": 8,
+          "cost_cents": 4000
+        },
+        {
+          "offer_a_quantity": 8,
+          "offer_b_quantity": 0,
+          "cost_cents": 4000
+        }
+      ]
+    },
+    {
+      "need": 9,
+      "feasible_allocations": 5,
+      "minimum_cost_cents": 4500,
+      "minimizers": [
+        {
+          "offer_a_quantity": 0,
+          "offer_b_quantity": 9,
+          "cost_cents": 4500
+        },
+        {
+          "offer_a_quantity": 8,
+          "offer_b_quantity": 1,
+          "cost_cents": 4500
+        }
+      ]
+    },
+    {
+      "need": 10,
+      "feasible_allocations": 5,
+      "minimum_cost_cents": 5000,
+      "minimizers": [
+        {
+          "offer_a_quantity": 0,
+          "offer_b_quantity": 10,
+          "cost_cents": 5000
+        },
+        {
+          "offer_a_quantity": 8,
+          "offer_b_quantity": 2,
+          "cost_cents": 5000
+        }
+      ]
+    },
+    {
+      "need": 12,
+      "feasible_allocations": 4,
+      "minimum_cost_cents": 6000,
+      "minimizers": [
+        {
+          "offer_a_quantity": 8,
+          "offer_b_quantity": 4,
+          "cost_cents": 6000
+        }
+      ]
+    },
+    {
+      "need": 15,
+      "feasible_allocations": 2,
+      "minimum_cost_cents": 7500,
+      "minimizers": [
+        {
+          "offer_a_quantity": 8,
+          "offer_b_quantity": 7,
+          "cost_cents": 7500
+        }
+      ]
+    }
+  ],
+  "infeasible_even_pack_case": {
+    "need": 5,
+    "feasible_allocations": 0,
+    "minimum_cost_cents": null,
+    "minimizers": []
+  },
+  "worked_comparison": {
+    "need": 3,
+    "lowest_unit_price_first_candidate": {
+      "a": 2,
+      "b": 1,
+      "cost_cents": 2100
+    },
+    "minimum_cost_candidate": {
+      "a": 0,
+      "b": 3,
+      "cost_cents": 1500
+    },
+    "interpretation": "Fixed freight changes the preferred allocation. This is a synthetic arithmetic comparison, not measured procurement savings."
+  },
+  "not_executed": [
+    "CP-SAT",
+    "Application API",
+    "PostgreSQL",
+    "Browser",
+    "Docker",
+    "Live ERP",
+    "Live model",
+    "Cloud deployment"
+  ]
+}

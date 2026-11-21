@@ -2,7 +2,9 @@
 
 **B2B procurement and supplier collaboration for industrial materials.**
 
-A full-stack engineering portfolio project connecting document review, supplier quotations, sourcing decisions, approvals, purchasing, receiving, invoice matching, and audit history.
+**Featured case study:** [SupplyPilot AI Case Study — controlled sourcing, purchasing and fulfillment](docs/case-study/SUPPLYPILOT_CASE_STUDY.md). Explore the architecture, optimization model, exact-payload approval, timeout reconciliation, invoice rechecks, verified PostgreSQL/CI evidence and enterprise delivery gates.
+
+A full-stack engineering project connecting document review, supplier quotations, sourcing decisions, approvals, purchasing, receiving, invoice matching, and audit history.
 
 > Development prototype. Supplier records are synthetic and external purchasing uses a local ERP simulator. This is not a production procurement service.
 
