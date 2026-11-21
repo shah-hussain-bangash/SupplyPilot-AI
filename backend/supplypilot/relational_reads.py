@@ -5,8 +5,16 @@ identity, timestamps, history and extension fields during this gradual cutover.
 A missing or stale projection fails closed instead of returning legacy values.
 """
 from copy import deepcopy
+from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import text
+
+
+def _timestamp(value):
+    # PostgreSQL JSON drops trailing fractional zeros; detail rows use datetime.
+    # Normalize both paths to the existing datetime.isoformat() API contract.
+    if isinstance(value,str):value=datetime.fromisoformat(value)
+    return value.isoformat() if hasattr(value,'isoformat') else value
 
 
 def _ready(db, kind):
@@ -88,7 +96,7 @@ def _view(row, user):
                     'accepted','rejected','quarantine','evidence_id'):
             field(key,deepcopy(row[key]))
         value=row['at']
-        field('at',value.isoformat() if hasattr(value,'isoformat') else value)
+        field('at',_timestamp(value))
     elif row['kind'] == 'invoice':
         for key in ('order_id','allocation_index','expected_revision','supplier_id','invoice_number',
                     'quantity','unit_price','evidence_id','status','tolerance','match_checks'):
@@ -97,7 +105,7 @@ def _view(row, user):
         for key in ('assessment_history','rechecked_by','recheck_reason','rechecked_at'):
             if key in data:
                 value=deepcopy(row[key])
-                data[key]=value.isoformat() if hasattr(value,'isoformat') else value
+                data[key]=_timestamp(value) if key=='rechecked_at' else value
     elif row['kind'] == 'order':
         if len(row['lines']) != len(data.get('lines', [])):
             raise HTTPException(503, {'code':'projection_not_ready',
@@ -106,7 +114,7 @@ def _view(row, user):
             field(key,row[key])
         if 'closed_at' in data or row['closed_at'] is not None:
             value=row['closed_at']
-            data['closed_at']=value.isoformat() if hasattr(value,'isoformat') else value
+            data['closed_at']=_timestamp(value)
         data['lines']=deepcopy(row['lines'])
     elif row['kind'] == 'offer':
         required=('rfq_id','supplier_id','sku','quantity','unit','unit_price',

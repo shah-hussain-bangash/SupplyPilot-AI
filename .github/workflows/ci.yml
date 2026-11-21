@@ -60,3 +60,23 @@ jobs:
         run: npm ci
       - name: Typecheck and build frontend
         run: npm run build
+
+  postgres:
+    name: PostgreSQL migrations and workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Test fresh PostgreSQL migrations, tenant scope and procurement workflow
+        run: python scripts/test_postgres.py --docker

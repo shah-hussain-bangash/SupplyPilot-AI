@@ -1,0 +1,166 @@
+"""Run acceptance checks in a new disposable PostgreSQL container only."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import sys
+import tempfile
+import time
+from unittest.mock import patch
+from uuid import uuid4
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--docker',action='store_true',required=True,
+                        help='Create and remove a dedicated PostgreSQL 17 container')
+    parser.add_argument('--repository',type=Path,default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--report',type=Path)
+    args=parser.parse_args()
+    backend=args.repository.resolve()/'backend'
+    if not (backend/'alembic.ini').is_file():
+        raise SystemExit('Repository must contain backend/alembic.ini.')
+    from sqlalchemy import URL,text
+    import psycopg
+    from psycopg import sql as pgsql
+
+    name='supplypilot-ci-'+uuid4().hex
+    admin_password=secrets.token_hex(24)
+    migrator_password=secrets.token_hex(24)
+    runtime_password=secrets.token_hex(24)
+    portal_password=secrets.token_hex(24)
+    passed=[]
+    engine=None
+    container_created=False
+
+    def docker(*parts,env=None):
+        result=subprocess.run(['docker',*parts],text=True,capture_output=True,env=env)
+        if result.returncode:
+            raise RuntimeError('Docker operation failed: '+result.stderr.strip()[:600])
+        return result.stdout.strip()
+
+    def check(ok,label):
+        if not ok:raise AssertionError(label)
+        passed.append(label)
+        print('PASS:',label,flush=True)
+
+    try:
+        # The password is passed through the child environment, never a command argument.
+        child_env=dict(os.environ,POSTGRES_PASSWORD=admin_password)
+        docker('run','--detach','--name',name,'--label','supplypilot.acceptance=disposable',
+               '--env','POSTGRES_PASSWORD','--env','POSTGRES_DB=supplypilot_dev',
+               '--publish','127.0.0.1::5432','postgres:17-alpine',env=child_env)
+        container_created=True
+        address=docker('port',name,'5432/tcp')
+        if not re.fullmatch(r'127\.0\.0\.1:\d+',address):
+            raise RuntimeError('Expected one local-only PostgreSQL port.')
+        port=int(address.rsplit(':',1)[1])
+        connection_args=dict(host='127.0.0.1',port=port,dbname='supplypilot_dev',
+                             user='postgres',password=admin_password,connect_timeout=2)
+        for attempt in range(30):
+            try:
+                with psycopg.connect(**connection_args):pass
+                break
+            except psycopg.OperationalError:
+                if attempt==29:raise RuntimeError('Temporary PostgreSQL did not become ready.') from None
+                time.sleep(1)
+
+        with psycopg.connect(**connection_args,autocommit=True) as admin:
+            for role,password in (('supplypilot_app',runtime_password),
+                                  ('supplypilot_migrator',migrator_password)):
+                admin.execute(pgsql.SQL('CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS').format(
+                    pgsql.Identifier(role),pgsql.Literal(password)))
+            admin.execute('GRANT CONNECT ON DATABASE supplypilot_dev TO supplypilot_app,supplypilot_migrator')
+            admin.execute('GRANT USAGE ON SCHEMA public TO supplypilot_app')
+            admin.execute('GRANT USAGE,CREATE ON SCHEMA public TO supplypilot_migrator')
+            admin.execute('ALTER DEFAULT PRIVILEGES FOR ROLE supplypilot_migrator IN SCHEMA public '
+                          'GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO supplypilot_app')
+
+        # Reuse the normal reviewed Alembic environment against this new container.
+        from alembic import command
+        from alembic.config import Config
+        cfg=Config(str(backend/'alembic.ini'))
+        with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+             patch('getpass.getpass',return_value=migrator_password):
+            command.upgrade(cfg,'head')
+
+        def sql(database,query):
+            # Acceptance cases cannot redirect the helper to another database.
+            if database!='supplypilot_dev':raise ValueError('Unexpected acceptance database')
+            with psycopg.connect(**connection_args,autocommit=True) as admin:
+                cursor=admin.execute(query)
+                rows=cursor.fetchall() if cursor.description is not None else []
+            def scalar(value):
+                if value is None:return ''
+                if isinstance(value,bool):return 't' if value else 'f'
+                return str(value)
+            return '\n'.join('|'.join(scalar(v) for v in row) for row in rows)
+
+        check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+              '0007_proc_fulfillment','Fresh database applies all seven migrations')
+        tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+        check(len(tables)==14,'Fresh database contains the 14 expected tables')
+        def row_hashes():
+            return {t:sorted(sql('supplypilot_dev','SELECT md5(row_to_json(r)::text) FROM public.'+t+' r').splitlines()) for t in tables}
+
+        with tempfile.TemporaryDirectory(prefix='supplypilot-ci-',ignore_cleanup_errors=True) as data:
+            runtime_url=URL.create('postgresql+psycopg',username='supplypilot_app',password=runtime_password,
+                host='127.0.0.1',port=port,database='supplypilot_dev')
+            os.environ.update(DATABASE_URL=runtime_url.render_as_string(hide_password=False),
+                DATA_DIR=data,APP_MODE='local',AUTH_MODE='local',
+                DEMO_PASSWORD=portal_password,TOKEN_SECRET=secrets.token_hex(32))
+            sys.path.insert(0,str(backend))
+            from supplypilot import manage
+            from supplypilot.db import engine as application_engine
+            engine=application_engine
+            manage.seed()
+            tenant_tables=[t for t in tables if t!='alembic_version']
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='13',
+                  'All 13 tenant tables have enabled and forced RLS')
+            with engine.connect() as runtime:
+                role=runtime.execute(text('SELECT current_user')).scalar_one()
+                check(role=='supplypilot_app','Workflow uses the restricted runtime role')
+                for table in tenant_tables:
+                    check(runtime.execute(text('SELECT count(*) FROM public.'+table)).scalar_one()==0,
+                          table+' denies reads without tenant context')
+                for table in [t for t in tenant_tables if t.startswith('proc_')]:
+                    check(not runtime.execute(text("SELECT has_table_privilege(current_user,:table,'INSERT,UPDATE,DELETE')"),{'table':'public.'+table}).scalar_one(),
+                          table+' remains read-only to runtime')
+                check(not runtime.execute(text("SELECT has_table_privilege(current_user,'public.audit','UPDATE,DELETE')")).scalar_one(),
+                      'Audit cannot be updated or deleted by runtime')
+                check(not runtime.execute(text("SELECT has_table_privilege(current_user,'public.alembic_version','SELECT,INSERT,UPDATE,DELETE')")).scalar_one(),
+                      'Migration version table is protected from runtime')
+            from fastapi.testclient import TestClient
+            from supplypilot.main import app
+            from postgres_acceptance_cases import workflow,read_checks
+            with TestClient(app) as client:
+                case=workflow(client,portal_password,check)
+                baseline=row_hashes()
+                read_checks(client,portal_password,check,sql,'supplypilot_dev')
+                check(row_hashes()==baseline,'Read probes restore every synthetic checkpoint row')
+            oid=case['order_id']
+            check(sql('supplypilot_dev',f"SELECT status||'|'||total FROM proc_orders WHERE id='{oid}'")=='closed|7250.00',
+                  'Relational order remains closed at AED 7250')
+            check(sql('supplypilot_dev',f"SELECT count(*),sum(accepted),sum(rejected),sum(quarantine) FROM proc_receipts WHERE order_id='{oid}'")=='2|55|0|0',
+                  'Receipt ledger retains 55 accepted pieces')
+            check(sql('supplypilot_dev',f"SELECT count(*),sum(quantity) FROM proc_invoices WHERE order_id='{oid}' AND status='matched'")=='2|55',
+                  'Invoice ledger retains two matched invoices for 55 pieces')
+            engine.dispose();engine=None
+        if args.report:
+            args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
+                'checks':passed,'revision':'0007_proc_fulfillment',
+                'database_scope':'new disposable PostgreSQL 17 container; synthetic data only'},indent=2),encoding='utf-8')
+        print('POSTGRESQL ACCEPTANCE PASSED')
+        print('Checks passed:',len(passed))
+    finally:
+        if engine is not None:engine.dispose()
+        if container_created:
+            docker('rm','--force',name)
+            print('Removed the dedicated acceptance container.')
+
+
+if __name__=='__main__':
+    main()
