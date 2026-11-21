@@ -34,7 +34,7 @@ flowchart LR
 - Partial receiving, accepted/rejected/quarantine quantities, invoice matching and recheck history.
 - Exception resolution, closure guards and scoped audit events.
 - PostgreSQL migrations through `0007_proc_fulfillment`, forced tenant RLS and synchronized relational projections.
-- Supplier/RFQ reads use relational fields while retaining source history and metadata. Writes and other reads retain the aggregate record model.
+- Supplier, RFQ, quotation, purchase-order, receipt and invoice reads use relational fields while retaining source history and metadata. Writes and remaining record kinds retain the aggregate record model.
 - SQLite mode for a fresh local demo and automated tests.
 
 ## Stack
@@ -92,7 +92,15 @@ Set-Location '.\backend'
 & '..\.venv\Scripts\python.exe' -m pytest
 ```
 
-These tests use temporary SQLite data. Separate PostgreSQL clone rehearsals were run during development for migrations, tenant isolation, restore verification and the complete API workflow. Those historical results do not replace PostgreSQL acceptance testing in a new environment.
+The pytest suite uses temporary SQLite data and adapter regression cases. To run the PostgreSQL acceptance suite from the repository root, with Docker running:
+
+```powershell
+& '.\.venv\Scripts\python.exe' '.\scripts\test_postgres.py' --docker
+```
+
+This creates a separate PostgreSQL 17 container with a randomly assigned local port and temporary credentials, applies the full Alembic migration chain, seeds synthetic accounts, checks RLS and protected grants, and replays procurement through receipt, invoice recheck and order closure. It also compares relational responses with authoritative records and tests supplier/tenant scope and stale projections. The runner removes its own container after success or failure and never connects to the development database. It requires Docker access and does not accept a database URL.
+
+GitHub CI runs this PostgreSQL check separately from the backend pytest suite and frontend build. Historical backup/restore rehearsals remain separate; this suite does not claim restore, browser, concurrency/load or live ERP coverage.
 
 ## Structure
 
