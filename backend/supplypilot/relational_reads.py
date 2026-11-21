@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False):
@@ -18,6 +18,13 @@ def _query(kind, user, single=False):
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'offer':
+        fields = """h.rfq_id,h.supplier_id,h.sku,h.quantity,h.unit,
+          h.unit_price::text AS unit_price,h.freight_per_piece::text AS freight_per_piece,
+          h.fixed_freight::text AS fixed_freight,h.moq,h.pack_size,h.currency,
+          h.valid_until,h.delivery_date,h.specs,h.evidence_id,h.recipient,h.terms,h.status,
+          h.compliance,h.compliance_revision,h.technical_reviewer,h.assessment_reason"""
+        table = 'proc_offers'
     else:
         fields = """h.title,h.due_date,h.status,h.owner_id,h.reviewer_id,
           (SELECT COALESCE(jsonb_agg(jsonb_build_object('sku',l.sku,'quantity',l.quantity,
@@ -27,7 +34,9 @@ def _query(kind, user, single=False):
            FROM public.proc_rfq_invitations i WHERE i.tenant=r.tenant AND i.rfq_id=r.id) AS invited"""
         table = 'proc_rfqs'
     visibility = ''
-    if user.role == 'supplier':
+    if user.role == 'supplier' and kind == 'offer':
+        visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
+    elif user.role == 'supplier':
         visibility = (' AND false' if kind == 'supplier' else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
@@ -50,6 +59,18 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'offer':
+        required=('rfq_id','supplier_id','sku','quantity','unit','unit_price',
+                  'freight_per_piece','currency','specs','evidence_id','recipient','terms','status','compliance')
+        for key in required:field(key,row[key])
+        for key in ('valid_until','delivery_date'):
+            value=row[key]
+            field(key,value.isoformat() if hasattr(value,'isoformat') else value)
+        # Legacy offers omitted these defaults. Keep that wire contract while
+        # reading present fields from the normalized quotation projection.
+        for key in ('fixed_freight','moq','pack_size','compliance_revision',
+                    'technical_reviewer','assessment_reason'):
+            if key in data:data[key]=row[key]
     else:
         for key in ('title','status'):
             field(key,row[key])
@@ -92,7 +113,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq'):return None
+    if kind not in ('supplier','rfq','offer'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
