@@ -95,10 +95,12 @@ Set-Location '.\backend'
 The pytest suite uses temporary SQLite data and adapter regression cases. To run the PostgreSQL acceptance suite from the repository root, with Docker running:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' '.\scripts\test_postgres.py' --docker
+& '.\.venv\Scripts\python.exe' '.\scripts\test_postgres.py' --docker --concurrency
 ```
 
 This creates a separate PostgreSQL 17 container with a randomly assigned local port and temporary credentials, applies the full Alembic migration chain, seeds synthetic accounts, checks RLS and protected grants, and replays procurement through receipt, invoice recheck and order closure. It also compares relational responses with authoritative records and tests supplier/tenant scope and stale projections. The runner removes its own container after success or failure and never connects to the development database. It requires Docker access and does not accept a database URL.
+
+With `--concurrency`, pairs of API requests are held behind a database row lock until PostgreSQL confirms that both are waiting, then released together. The suite checks duplicate execution and reconciliation, competing receipts and invoices, exact ledger totals, and audit counts. These are targeted race checks, not a load benchmark.
 
 GitHub CI runs this PostgreSQL check separately from the backend pytest suite and frontend build. Historical backup/restore rehearsals remain separate; this suite does not claim restore, browser, concurrency/load or live ERP coverage.
 

@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
-def workflow(client, password, check):
+def workflow(client, password, check, race=None):
     tokens = {}
     for role in ('buyer','technical','manager','warehouse','finance','auditor',
                  'supplier-gulf','supplier-desert','other-buyer'):
@@ -93,12 +93,26 @@ def workflow(client, password, check):
          'decision':'approved','reason':'Synthetic budget and evidence approved by separate manager'},'manager')
     key='workflow-'+suffix
     execute={'expected_revision':plan['revision'],'key':key}
-    intent=post('/plans/'+plan['id']+'/execute',execute,status=202)
+    if race:
+        outcomes=race(client,tokens,plan['id'],'/plans/'+plan['id']+'/execute',
+                      [execute,execute],'buyer',[202,202],'Duplicate execution')
+        check(outcomes[0].json()['id']==outcomes[1].json()['id'],
+              'Concurrent duplicate keys return the same durable intent')
+        intent=outcomes[0].json()
+    else:
+        intent=post('/plans/'+plan['id']+'/execute',execute,status=202)
     repeated=post('/plans/'+plan['id']+'/execute',execute,status=202)
     check(intent['id']==repeated['id'],'Repeated execution key returns the same intent')
     uncertain=post('/executions/'+intent['id']+'/dispatch',{'simulate_timeout':True})
     check(uncertain['state']=='uncertain','Simulated timeout persists an uncertain execution')
-    confirmed=post('/executions/'+intent['id']+'/reconcile',{})
+    if race:
+        outcomes=race(client,tokens,intent['id'],'/executions/'+intent['id']+'/reconcile',
+                      [{},{}],'buyer',[200,200],'Duplicate reconciliation',lock_table='outbox')
+        check(outcomes[0].json()['external_id']==outcomes[1].json()['external_id'],
+              'Concurrent reconciliation returns one external order identity')
+        confirmed=outcomes[0].json()
+    else:
+        confirmed=post('/executions/'+intent['id']+'/reconcile',{})
     check(confirmed['state']=='confirmed','Reconciliation confirms the durable simulator purchase')
     again=post('/executions/'+intent['id']+'/reconcile',{})
     check(again['external_id']==confirmed['external_id'],'Repeated reconciliation returns the same external order')
@@ -111,14 +125,31 @@ def workflow(client, password, check):
     indexes={x['supplier_id']:i for i,x in enumerate(order['data']['lines'])}
     def receipt(supplier,qty):
         o=record(oid)
-        return post('/receipts',{'order_id':oid,'expected_revision':o['revision'],
+        payload={'order_id':oid,'expected_revision':o['revision'],
             'allocation_index':indexes[supplier],'accepted':qty,'rejected':0,'quarantine':0,
-            'evidence_id':source['id']},'warehouse',201)
+            'evidence_id':source['id']}
+        if race and supplier=='gulf':
+            outcomes=race(client,tokens,oid,'/receipts',[payload,payload],
+                          'warehouse',[201,409],'Competing receipts')
+            saved=next(r.json() for r in outcomes if r.status_code==201)
+            check(record(oid)['revision']==o['revision']+1,
+                  'Competing receipts advance the order revision exactly once')
+            return saved
+        return post('/receipts',payload,'warehouse',201)
     def invoice(supplier,qty,price):
         o=record(oid)
-        return post('/invoices',{'order_id':oid,'expected_revision':o['revision'],
+        payload={'order_id':oid,'expected_revision':o['revision'],
             'allocation_index':indexes[supplier],'invoice_number':'WF-'+supplier+'-'+suffix,
-            'quantity':qty,'unit_price':price,'evidence_id':source['id']},'finance',201)
+            'quantity':qty,'unit_price':price,'evidence_id':source['id']}
+        if race and supplier=='gulf':
+            competitor=dict(payload,invoice_number=payload['invoice_number']+'-competitor')
+            outcomes=race(client,tokens,oid,'/invoices',[payload,competitor],
+                          'finance',[201,409],'Competing invoices')
+            saved=next(r.json() for r in outcomes if r.status_code==201)
+            check(record(oid)['revision']==o['revision']+1,
+                  'Competing invoices advance the order revision exactly once')
+            return saved
+        return post('/invoices',payload,'finance',201)
     gulf_receipt=receipt('gulf',30)
     check(record(gulf_receipt['id'])==gulf_receipt,'New receipt detail matches creation response')
     good=invoice('gulf',30,'120.00')
@@ -153,7 +184,7 @@ def workflow(client, password, check):
     events=request('GET','/audit','auditor')
     check(any(x['action']=='order.closed' and x['resource']==oid for x in events),
           'Auditor can read the new order closure event')
-    return {'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
+    return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
 
 
