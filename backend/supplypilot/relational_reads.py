@@ -1,4 +1,4 @@
-"""PostgreSQL supplier/RFQ reads; writes retain their existing transaction path.
+"""PostgreSQL procurement reads; writes retain their existing transaction path.
 
 Normalized fields come from synchronized tables. Source records retain the API
 identity, timestamps, history and extension fields during this gradual cutover.
@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False):
@@ -18,6 +18,20 @@ def _query(kind, user, single=False):
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'order':
+        fields = """h.rfq_id,h.plan_id,h.intent_id,h.external_id,h.status,
+          h.total::text AS total,h.currency,h.simulated,h.closed_at,
+          (SELECT COALESCE(jsonb_agg(l.approved_snapshot || jsonb_build_object(
+            'offer_id',l.offer_id,'offer_revision',l.offer_revision,
+            'supplier_id',l.supplier_id,'sku',l.sku,'quantity',l.quantity,'unit',l.unit,
+            'unit_price',l.unit_price::text,'freight_per_piece',l.freight_per_piece::text,
+            'line_total',l.line_total::text,'received',l.received,'accepted',l.accepted,
+            'rejected',l.rejected,'quarantine',l.quarantine) ||
+            CASE WHEN l.approved_snapshot ? 'fixed_freight'
+              THEN jsonb_build_object('fixed_freight',l.fixed_freight::text)
+              ELSE '{}'::jsonb END ORDER BY l.line_index),'[]'::jsonb)
+           FROM public.proc_order_lines l WHERE l.tenant=r.tenant AND l.order_id=r.id) AS lines"""
+        table = 'proc_orders'
     elif kind == 'offer':
         fields = """h.rfq_id,h.supplier_id,h.sku,h.quantity,h.unit,
           h.unit_price::text AS unit_price,h.freight_per_piece::text AS freight_per_piece,
@@ -37,7 +51,7 @@ def _query(kind, user, single=False):
     if user.role == 'supplier' and kind == 'offer':
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind == 'supplier' else """ AND EXISTS
+        visibility = (' AND false' if kind in ('supplier','order') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
     return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,r.data,
@@ -59,6 +73,16 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'order':
+        if len(row['lines']) != len(data.get('lines', [])):
+            raise HTTPException(503, {'code':'projection_not_ready',
+                'message':'Procurement order lines are missing; contact support'})
+        for key in ('rfq_id','plan_id','intent_id','external_id','status','total','currency','simulated'):
+            field(key,row[key])
+        if 'closed_at' in data or row['closed_at'] is not None:
+            value=row['closed_at']
+            data['closed_at']=value.isoformat() if hasattr(value,'isoformat') else value
+        data['lines']=deepcopy(row['lines'])
     elif row['kind'] == 'offer':
         required=('rfq_id','supplier_id','sku','quantity','unit','unit_price',
                   'freight_per_piece','currency','specs','evidence_id','recipient','terms','status','compliance')
@@ -113,7 +137,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer'):return None
+    if kind not in ('supplier','rfq','offer','order'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
