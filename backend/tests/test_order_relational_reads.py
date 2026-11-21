@@ -63,3 +63,16 @@ def test_order_adapter_keeps_sqlite_fallback():
     db=SimpleNamespace(get_bind=lambda:SimpleNamespace(dialect=SimpleNamespace(name='sqlite')))
     assert relational_reads.collection(db,SimpleNamespace(role='buyer'),'order',0,100) is None
     assert relational_reads.record(db,SimpleNamespace(role='buyer'),'order-test') is None
+
+
+@pytest.mark.parametrize('value,expected',[('2026-11-02T00:00:00.1234+00:00','2026-11-02T00:00:00.123400+00:00'),
+     ('2026-11-02T00:00:00.00001+00:00','2026-11-02T00:00:00.000010+00:00'),
+     ('2026-11-02T00:00:00+00:00','2026-11-02T00:00:00+00:00'),
+     ('2026-11-02T00:00:00.123456+00:00','2026-11-02T00:00:00.123456+00:00')])
+def test_postgresql_json_timestamp_matches_order_detail(value,expected):
+    row=order_row(); row['closed_at']=value
+    collection=relational_reads._view(row,SimpleNamespace(role='buyer'))
+    row['closed_at']=datetime.fromisoformat(value)
+    detail=relational_reads._view(row,SimpleNamespace(role='buyer'))
+    assert collection==detail
+    assert collection['data']['closed_at']==expected

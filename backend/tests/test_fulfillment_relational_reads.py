@@ -87,3 +87,19 @@ def test_ledger_adapter_keeps_sqlite_fallback(kind):
     db=SimpleNamespace(get_bind=lambda:SimpleNamespace(dialect=SimpleNamespace(name='sqlite')))
     assert relational_reads.collection(db,SimpleNamespace(role='buyer'),kind,0,100) is None
     assert relational_reads.record(db,SimpleNamespace(role='buyer'),'ledger-test') is None
+
+
+@pytest.mark.parametrize('kind',['receipt','invoice'])
+@pytest.mark.parametrize('value,expected',[('2026-11-02T00:00:00.1234+00:00','2026-11-02T00:00:00.123400+00:00'),
+     ('2026-11-02T00:00:00.00001+00:00','2026-11-02T00:00:00.000010+00:00'),
+     ('2026-11-02T00:00:00+00:00','2026-11-02T00:00:00+00:00'),
+     ('2026-11-02T00:00:00.123456+00:00','2026-11-02T00:00:00.123456+00:00')])
+def test_postgresql_json_timestamp_matches_detail_timestamp(kind,value,expected):
+    row=ledger_row(kind)
+    key='at' if kind=='receipt' else 'rechecked_at'
+    row[key]=value
+    collection=relational_reads._view(row,SimpleNamespace(role='buyer'))
+    row[key]=datetime.fromisoformat(value)
+    detail=relational_reads._view(row,SimpleNamespace(role='buyer'))
+    assert collection==detail
+    assert collection['data'][key]==expected

@@ -281,6 +281,23 @@ def read_checks(client,password,check,sql,clone):
             check(response.status_code==503,'Stale '+kind+' collection fails closed')
         finally:
             sql(clone,"UPDATE "+table+" h SET source_revision=r.revision FROM records r WHERE r.tenant=h.tenant AND r.id=h.id AND h.tenant='demo' AND h.id='"+rid+"'")
+    for kind,table,column,key in (
+        ('receipt','proc_receipts','received_at','at'),
+        ('invoice','proc_invoices','rechecked_at','rechecked_at'),
+        ('order','proc_orders','closed_at','closed_at')):
+        rid=sql(clone,"SELECT id FROM "+table+" WHERE tenant='demo' AND "+column+" IS NOT NULL ORDER BY id LIMIT 1")
+        original_time=sql(clone,"SELECT "+column+"::text FROM "+table+" WHERE tenant='demo' AND id='"+rid+"'")
+        try:
+            sql(clone,"UPDATE "+table+" SET "+column+"='2026-11-02T00:00:00.123400+00:00' WHERE tenant='demo' AND id='"+rid+"'")
+            detail=client.get('/api/v1/record/'+rid,headers=tokens['buyer'])
+            page=client.get('/api/v1/records/'+kind,headers=tokens['buyer'])
+            check(detail.status_code==200 and page.status_code==200,
+                  kind+' fractional timestamp probe reads succeed')
+            item=next(x for x in page.json()['items'] if x['id']==rid)
+            check(item==detail.json() and item['data'][key]=='2026-11-02T00:00:00.123400+00:00',
+                  kind+' collection and detail preserve trailing timestamp zeros')
+        finally:
+            sql(clone,"UPDATE "+table+" SET "+column+"='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+rid+"'")
     # Controlled corruption is confined to this disposable clone and restored in finally.
     # It proves relational field consumption and fail-closed stale revision behavior.
     rid='rfq-demo'
