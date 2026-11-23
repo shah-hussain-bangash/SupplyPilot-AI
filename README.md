@@ -106,6 +106,20 @@ With `--concurrency`, pairs of API requests are held behind a database row lock 
 
 GitHub CI runs this PostgreSQL check separately from the backend pytest suite and frontend build. With `--restore-check`, the synthetic database is dumped and restored into a second database in the same temporary container. The suite compares all public table rows, columns, constraints, indexes, owners, RLS policies, functions, triggers and table grants, then checks tenant visibility and restricted runtime access in the restored database. The cluster roles already exist in that container. Historical private backup rehearsals remain separate; this suite does not cover file uploads, role recovery into a new cluster, browser behavior, load testing or live ERP recovery.
 
+## Browser acceptance
+
+From the repository root, with Node.js installed:
+
+```powershell
+& '.\.venv\Scripts\python.exe' '.\scripts\test_browser.py' --prepare
+```
+
+`--prepare` installs locked frontend packages, builds the portal and installs Chromium. On Linux, install browser system dependencies with `npx playwright install --with-deps chromium` from `frontend` first, as the CI job does. Subsequent runs can omit `--prepare`.
+
+The runner creates temporary SQLite data and generated demo credentials, starts its own loopback server on a dynamic port, and opens the actual portal in headless Chromium. It checks 18 buyer screens and seven roles through technical review, approval, timeout reconciliation, receiving, invoice mismatch/recheck, closure, supplier scope and auditor access. It also opens a mobile viewport. There are no mocked API responses. Reports and synthetic screenshots go to ignored `test-results/browser/`; browser and server cleanup run after success or failure.
+
+GitHub runs this browser job alongside the backend, PostgreSQL and frontend build jobs. Browser coverage uses SQLite; the separate PostgreSQL suite covers relational reads, concurrency and restore. This is not cross-browser, accessibility or comprehensive visual acceptance.
+
 ## Structure
 
 ```text

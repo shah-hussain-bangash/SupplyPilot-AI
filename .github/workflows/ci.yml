@@ -80,3 +80,38 @@ jobs:
         run: python -m pip install -r backend/requirements.txt
       - name: Test fresh PostgreSQL migrations, tenant scope and procurement workflow
         run: python scripts/test_postgres.py --docker --concurrency --restore-check
+
+  browser:
+    name: Browser procurement workflow (SQLite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Install locked frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build portal
+        working-directory: frontend
+        run: npm run build
+      - name: Install Chromium and system dependencies
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Test real browser procurement workflow
+        run: python scripts/test_browser.py
