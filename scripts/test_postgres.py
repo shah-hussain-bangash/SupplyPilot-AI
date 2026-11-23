@@ -88,12 +88,20 @@ def main():
         cfg=Config(str(backend/'alembic.ini'))
         with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
              patch('getpass.getpass',return_value=migrator_password):
-            command.upgrade(cfg,'head')
+            command.upgrade(cfg,'0007_proc_fulfillment')
 
-        def sql(database,query):
+        def sql(database,query,expected_error=False):
             # Acceptance cases cannot redirect the helper to another database.
             if database!='supplypilot_dev':raise ValueError('Unexpected acceptance database')
             with psycopg.connect(**connection_args,autocommit=True) as admin:
+                if expected_error:
+                    try:
+                        with admin.transaction():
+                            admin.execute('SET LOCAL ROLE supplypilot_migrator')
+                            admin.execute(query)
+                        return None
+                    except psycopg.Error as error:
+                        return error.sqlstate
                 cursor=admin.execute(query)
                 rows=cursor.fetchall() if cursor.description is not None else []
             def scalar(value):
@@ -120,9 +128,20 @@ def main():
             from supplypilot.db import engine as application_engine
             engine=application_engine
             manage.seed()
+            before_inventory=row_hashes()
+            with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+                 patch('getpass.getpass',return_value=migrator_password):
+                command.upgrade(cfg,'head')
+            check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+                  '0008_proc_inventory','Seeded database applies the inventory migration through Alembic')
+            tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            check(len(tables)==16,'Inventory upgrade creates the 16-table checkpoint')
+            after_inventory=row_hashes()
+            check(all(after_inventory[t]==v for t,v in before_inventory.items() if t!='alembic_version'),
+                  'Inventory migration preserves every pre-existing tenant row')
             tenant_tables=[t for t in tables if t!='alembic_version']
-            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='13',
-                  'All 13 tenant tables have enabled and forced RLS')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='15',
+                  'All 15 tenant tables have enabled and forced RLS')
             with engine.connect() as runtime:
                 role=runtime.execute(text('SELECT current_user')).scalar_one()
                 check(role=='supplypilot_app','Workflow uses the restricted runtime role')
@@ -165,15 +184,17 @@ def main():
                       'Rejected receipt request adds no extra receipt audit event')
                 check(sql('supplypilot_dev',f"SELECT count(*) FROM audit WHERE action='order.invoice_reviewed' AND resource='{oid}'")=='2',
                       'Rejected invoice request adds no extra invoice audit event')
+            from postgres_inventory_cases import inventory_checks
+            inventory_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             if args.restore_check:
                 from postgres_restore_cases import restore_checks
                 restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
-                'checks':passed,'revision':'0007_proc_fulfillment',
+                'checks':passed,'revision':'0008_proc_inventory',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
