@@ -35,8 +35,9 @@ flowchart LR
 - Transactional execution intents, simulator idempotency and timeout reconciliation.
 - Partial receiving, accepted/rejected/quarantine quantities, invoice matching and recheck history.
 - Exception resolution, closure guards and scoped audit events.
-- PostgreSQL migrations through `0007_proc_fulfillment`, forced tenant RLS and synchronized relational projections.
+- PostgreSQL migrations through `0008_proc_inventory`, forced tenant RLS and synchronized relational projections.
 - Supplier, RFQ, quotation, purchase-order, receipt and invoice reads use relational fields while retaining source history and metadata. Writes and remaining record kinds retain the aggregate record model.
+- Read-only stock-balance and inbound-delivery projections synchronized from authoritative inventory records. Inventory portal reads retain the aggregate path.
 - SQLite mode for a fresh local demo and automated tests.
 
 ## Stack
@@ -100,7 +101,7 @@ The pytest suite uses temporary SQLite data and adapter regression cases. To run
 & '.\.venv\Scripts\python.exe' '.\scripts\test_postgres.py' --docker --concurrency --restore-check
 ```
 
-This creates a separate PostgreSQL 17 container with a randomly assigned local port and temporary credentials, applies the full Alembic migration chain, seeds synthetic accounts, checks RLS and protected grants, and replays procurement through receipt, invoice recheck and order closure. It also compares relational responses with authoritative records and tests supplier/tenant scope and stale projections. The runner removes its own container after success or failure and never connects to the development database. It requires Docker access and does not accept a database URL.
+This creates a separate PostgreSQL 17 container with a randomly assigned local port and temporary credentials, applies migrations through `0007`, seeds synthetic accounts, upgrades through `0008` to test the inventory backfill, checks RLS and protected grants, and replays procurement through receipt, invoice recheck and order closure. Inventory acceptance cases cover backfill parity, balance validation, ordered inbound deliveries, tenant isolation and rollback. It also compares relational responses with authoritative records and tests supplier/tenant scope and stale projections. The runner removes its own container after success or failure and never connects to the development database. It requires Docker access and does not accept a database URL.
 
 With `--concurrency`, pairs of API requests are held behind a database row lock until PostgreSQL confirms that both are waiting, then released together. The suite checks duplicate execution and reconciliation, competing receipts and invoices, exact ledger totals, and audit counts. These are targeted race checks, not a load benchmark.
 
