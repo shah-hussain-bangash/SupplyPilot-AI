@@ -19,7 +19,11 @@ def prepare_exceptions(client,password,check):
     response=client.post('/api/v1/exceptions/'+case['id']+'/resolve',headers=headers,
         json={'expected_revision':case['revision'],'evidence_id':doc,'reason':'Reviewed synthetic evidence before migration'})
     check(response.status_code==200,'Real API exception resolves before storage upgrade')
-    return case['id']
+    quarantine=client.post('/api/v1/documents',headers=headers,
+        files={'file':('quarantine-demo.pdf',b'SYNTHETIC INVALID PDF','application/pdf')})
+    check(quarantine.status_code==201 and quarantine.json()['data']['status']=='quarantined',
+          'Quarantined API document exists before document storage upgrade')
+    return case['id'],doc,quarantine.json()['id']
 
 
 def exception_checks(sql,runtime_args,check):
@@ -42,6 +46,10 @@ def exception_checks(sql,runtime_args,check):
     with psycopg.connect(**runtime_args,autocommit=True) as conn:
         def tenant(scope='demo'):conn.execute("SELECT set_config('supplypilot.tenant',%s,true)",(scope,))
         def insert(identity,data,scope='demo',kind='exception'):
+            if kind=='document' and data=={}:
+                data={'filename':'fixture.txt','sha256':'e87a104866b9c15d77cc15c596ac3b4fdb08be65d3a6b2f2621b71b20d8cccc5',
+                      'status':'review_required','pages':['Synthetic reference fixture'],
+                      'parser':'fixture','malware_scanned':False,'supplier_id':None}
             conn.execute("INSERT INTO records(id,tenant,kind,revision,data,created_at,updated_at) "
                 "VALUES(%s,%s,%s,1,%s,'2030-01-01','2030-01-01')",(identity,scope,kind,Jsonb(data)))
         def change(data):conn.execute('UPDATE records SET revision=revision+1,data=%s WHERE id=%s',(Jsonb(data),rid))
