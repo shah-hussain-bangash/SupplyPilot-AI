@@ -5,6 +5,7 @@ All controlled projection probes are restored in finally blocks.
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
+import json
 
 def workflow(client, password, check, race=None):
     tokens = {}
@@ -26,7 +27,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice'):
+        if result['kind'] in ('order','receipt','invoice','stock'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -151,6 +152,10 @@ def workflow(client, password, check, race=None):
             return saved
         return post('/invoices',payload,'finance',201)
     gulf_receipt=receipt('gulf',30)
+    inventory=request('GET','/records/stock','warehouse')['items']
+    received_stock=next(x for x in inventory if x['data']['sku']==sku)
+    check(record(received_stock['id'])['data']['usable']==30,
+          'Inventory relational reads expose the first receipt stock balance')
     check(record(gulf_receipt['id'])==gulf_receipt,'New receipt detail matches creation response')
     good=invoice('gulf',30,'120.00')
     check(record(good['id'])==good,'Matched invoice detail matches creation response')
@@ -162,6 +167,9 @@ def workflow(client, password, check, race=None):
     post('/orders/'+oid+'/close',{'expected_revision':o['revision']},status=409)
     check(True,'Incomplete receipt prevents order closure')
     receipt('desert',25)
+    updated_stock=record(received_stock['id'])
+    check(updated_stock['data']['usable']==55 and updated_stock['revision']==2,
+          'Inventory relational reads expose the second receipt and revision')
     rechecked=post('/invoices/'+bad['id']+'/recheck',{'expected_revision':bad['revision'],
         'expected_order_revision':record(oid)['revision'],
         'reason':'Missing synthetic receipt recorded; recheck same invoice facts'},'finance')
@@ -198,7 +206,7 @@ def read_checks(client,password,check,sql,clone):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -329,6 +337,58 @@ def read_checks(client,password,check,sql,clone):
                   kind+' collection and detail preserve trailing timestamp zeros')
         finally:
             sql(clone,"UPDATE "+table+" SET "+column+"='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+rid+"'")
+    for role in ('supplier-gulf','supplier-desert','other-buyer'):
+        response=client.get('/api/v1/record/stock-demo',headers=tokens[role])
+        check(response.status_code==404,role+' cannot read demo inventory detail')
+    old_usable=sql(clone,"SELECT usable FROM proc_stock WHERE tenant='demo' AND id='stock-demo'")
+    try:
+        sql(clone,"UPDATE proc_stock SET usable=usable+1 WHERE tenant='demo' AND id='stock-demo'")
+        detail=client.get('/api/v1/record/stock-demo',headers=tokens['buyer'])
+        check(detail.status_code==200 and detail.json()['data']['usable']==int(old_usable)+1,
+              'Inventory detail consumes normalized stock balances')
+        page=client.get('/api/v1/records/stock',headers=tokens['buyer'])
+        check(any(x['id']=='stock-demo' and x['data']['usable']==int(old_usable)+1 for x in page.json()['items']),
+              'Inventory collection consumes normalized stock balances')
+    finally:
+        sql(clone,"UPDATE proc_stock SET usable="+old_usable+" WHERE tenant='demo' AND id='stock-demo'")
+    saved_lines=sql(clone,"SELECT jsonb_agg(to_jsonb(l) ORDER BY line_index)::text FROM proc_stock_inbound l WHERE tenant='demo' AND stock_id='stock-demo'")
+    try:
+        sql(clone,"UPDATE proc_stock_inbound SET quantity=quantity+1 WHERE tenant='demo' AND stock_id='stock-demo' AND line_index=0")
+        detail=client.get('/api/v1/record/stock-demo',headers=tokens['buyer'])
+        expected=json.loads(saved_lines)[0]['quantity']+1
+        check(detail.status_code==200 and detail.json()['data']['inbound'][0]['quantity']==expected,
+              'Inventory detail consumes normalized inbound quantities')
+        page=client.get('/api/v1/records/stock',headers=tokens['buyer'])
+        check(next(x for x in page.json()['items'] if x['id']=='stock-demo')['data']['inbound'][0]['quantity']==expected,
+              'Inventory collection consumes normalized inbound quantities')
+    finally:
+        sql(clone,"DELETE FROM proc_stock_inbound WHERE tenant='demo' AND stock_id='stock-demo'")
+        sql(clone,"INSERT INTO proc_stock_inbound SELECT * FROM jsonb_populate_recordset(NULL::proc_stock_inbound,'"+saved_lines.replace("'","''")+"')")
+    try:
+        sql(clone,"DELETE FROM proc_stock_inbound WHERE tenant='demo' AND stock_id='stock-demo'")
+        for path in ('/record/stock-demo','/records/stock'):
+            response=client.get('/api/v1'+path,headers=tokens['buyer'])
+            check(response.status_code==503,'Missing inbound rows fail closed for '+path)
+    finally:
+        sql(clone,"INSERT INTO proc_stock_inbound SELECT * FROM jsonb_populate_recordset(NULL::proc_stock_inbound,'"+saved_lines.replace("'","''")+"')")
+    try:
+        sql(clone,"UPDATE proc_stock SET source_revision=source_revision+1 WHERE tenant='demo' AND id='stock-demo'")
+        for path in ('/record/stock-demo','/records/stock'):
+            response=client.get('/api/v1'+path,headers=tokens['buyer'])
+            check(response.status_code==503 and response.json()['detail']['code']=='projection_not_ready',
+                  'Stale inventory fails closed for '+path)
+    finally:
+        sql(clone,"UPDATE proc_stock h SET source_revision=r.revision FROM records r WHERE r.tenant=h.tenant AND r.id=h.id AND h.tenant='demo' AND h.id='stock-demo'")
+    original_time=sql(clone,"SELECT as_of::text FROM proc_stock WHERE tenant='demo' AND id='stock-demo'")
+    try:
+        sql(clone,"UPDATE proc_stock SET as_of='2026-11-02T00:00:00.123400+00:00' WHERE tenant='demo' AND id='stock-demo'")
+        detail=client.get('/api/v1/record/stock-demo',headers=tokens['buyer'])
+        page=client.get('/api/v1/records/stock',headers=tokens['buyer'])
+        item=next(x for x in page.json()['items'] if x['id']=='stock-demo')
+        check(item==detail.json() and item['data']['as_of']=='2026-11-02T00:00:00.123400+00:00',
+              'Inventory collection and detail preserve timestamp precision')
+    finally:
+        sql(clone,"UPDATE proc_stock SET as_of='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='stock-demo'")
     # Controlled corruption is confined to this disposable clone and restored in finally.
     # It proves relational field consumption and fail-closed stale revision behavior.
     rid='rfq-demo'
