@@ -24,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock','plan'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan','exception'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -184,6 +184,7 @@ def workflow(client, password, check, race=None):
           'Recheck preserves invoice facts')
     cases=request('GET','/records/exception','finance')['items']
     relevant=[x for x in cases if x['data']['resource_id']==bad['id']]
+    check(record(relevant[0]['id'])['data']['status']=='resolved','Automatic invoice resolution is visible in exception relational detail')
     check(len(relevant)==1 and relevant[0]['data']['status']=='resolved',
           'Successful recheck resolves its generated matching exception')
     o=record(oid)
@@ -193,6 +194,7 @@ def workflow(client, password, check, race=None):
     events=request('GET','/audit','auditor')
     check(any(x['action']=='order.closed' and x['resource']==oid for x in events),
           'Auditor can read the new order closure event')
+    exception_workflow(client,password,check,tokens)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
 
@@ -207,7 +209,7 @@ def read_checks(client,password,check,sql,clone):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -448,3 +450,84 @@ def read_checks(client,password,check,sql,clone):
         item=next(x for x in page.json()['items'] if x['id']==plan_id)
         check(detail.status_code==200 and item==detail.json() and item['data']['expires_at']=='2020-01-01T00:00:00.123400+00:00','Expired historical plan stays readable with exact timestamp precision')
     finally:restore_plan()
+
+    exception_id=sql(clone,"SELECT id FROM proc_exceptions WHERE tenant='demo' ORDER BY id LIMIT 1")
+    saved=sql(clone,"SELECT to_jsonb(e)::text FROM proc_exceptions e WHERE tenant='demo' AND id='"+exception_id+"'")
+    def restore_exception():
+        sql(clone,"DELETE FROM proc_exceptions WHERE tenant='demo' AND id='"+exception_id+"'")
+        sql(clone,"INSERT INTO proc_exceptions SELECT * FROM jsonb_populate_record(NULL::proc_exceptions,'"+saved.replace("'","''")+"')")
+    for role in ('supplier-gulf','supplier-desert','other-buyer'):
+        response=client.get('/api/v1/record/'+exception_id,headers=tokens[role])
+        check(response.status_code==404,role+' cannot read demo exception detail')
+    try:
+        sql(clone,"UPDATE proc_exceptions SET detail='Projected exception detail',source_snapshot=source_snapshot || '{\"read_extension\":{\"note\":\"retained\"}}'::jsonb WHERE tenant='demo' AND id='"+exception_id+"'")
+        for path in ('/record/'+exception_id,'/records/exception'):
+            response=client.get('/api/v1'+path,headers=tokens['finance'])
+            check(response.status_code==200,'Exception relational probe succeeds for '+path)
+            item=response.json() if path.startswith('/record/') else next(x for x in response.json()['items'] if x['id']==exception_id)
+            check(item['data']['detail']=='Projected exception detail' and item['data']['read_extension']=={'note':'retained'},
+                  'Exception reads consume projected fields and complete snapshot for '+path)
+    finally:restore_exception()
+    for missing in (False,True):
+        try:
+            if missing:sql(clone,"DELETE FROM proc_exceptions WHERE tenant='demo' AND id='"+exception_id+"'")
+            else:sql(clone,"UPDATE proc_exceptions SET source_revision=source_revision+1 WHERE tenant='demo' AND id='"+exception_id+"'")
+            for path in ('/record/'+exception_id,'/records/exception'):
+                response=client.get('/api/v1'+path,headers=tokens['finance'])
+                check(response.status_code==503 and response.json()['detail']['code']=='projection_not_ready',
+                      ('Missing' if missing else 'Stale')+' exception fails closed for '+path)
+        finally:restore_exception()
+    timed=sql(clone,"SELECT id FROM proc_exceptions WHERE tenant='demo' AND resolved_at IS NOT NULL ORDER BY id LIMIT 1")
+    original_time=sql(clone,"SELECT resolved_at::text FROM proc_exceptions WHERE tenant='demo' AND id='"+timed+"'")
+    try:
+        sql(clone,"UPDATE proc_exceptions SET resolved_at='2020-01-01T00:00:00.123400+00:00' WHERE tenant='demo' AND id='"+timed+"'")
+        detail=client.get('/api/v1/record/'+timed,headers=tokens['finance'])
+        page=client.get('/api/v1/records/exception',headers=tokens['finance'])
+        item=next(x for x in page.json()['items'] if x['id']==timed)
+        check(detail.status_code==200 and item==detail.json() and item['data']['resolved_at']=='2020-01-01T00:00:00.123400+00:00',
+              'Historical exception resolution remains readable with exact timestamp precision')
+    finally:
+        sql(clone,"UPDATE proc_exceptions SET resolved_at='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+timed+"'")
+
+
+def exception_workflow(client,password,check,tokens):
+    from supplypilot.db import Session
+    from supplypilot.security import lookup_identity
+    from supplypilot.domain import get,view
+    def request(method,path,role='buyer',body=None,status=200,**kwargs):
+        response=client.request(method,'/api/v1'+path,headers=tokens[role],
+            **({'json':body} if body is not None else {}),**kwargs)
+        if response.status_code!=status:raise AssertionError(f'{method} {path}: {response.status_code}: {response.text[:500]}')
+        return response.json()
+    def parity(case,label):
+        detail=request('GET','/record/'+case['id'])
+        page=request('GET','/records/exception')
+        with Session() as db:
+            user=lookup_identity(db,'buyer',by_username=True)
+            expected=view(get(db,user,case['id']),user)
+        check(detail==case==expected and next(x for x in page['items'] if x['id']==case['id'])==case,label)
+    doc=request('POST','/documents',status=201,files={'file':('exception-demo.txt',b'SYNTHETIC EXCEPTION EVIDENCE ONLY','text/plain')})
+    body={'resource_id':doc['id'],'category':'read-rehearsal','detail':'Synthetic case lifecycle for relational reads',
+          'owner':'buyer','due_date':'2030-01-01'}
+    case=request('POST','/exceptions',body=body,status=201)
+    parity(case,'New open exception collection and detail match creation and authoritative facts')
+    duplicate=request('POST','/exceptions',body=body,status=201)
+    check(duplicate['id']==case['id'],'Repeated open case creation returns its existing identity')
+    for role in ('supplier-gulf','other-buyer'):request('GET','/record/'+case['id'],role,status=404)
+    check(True,'Suppliers and other tenants cannot read the new exception')
+    resolution={'expected_revision':case['revision'],'evidence_id':doc['id'],'reason':'Synthetic evidence reviewed by assigned owner'}
+    request('POST','/exceptions/'+case['id']+'/resolve','technical',resolution,403)
+    check(True,'An unrelated internal account cannot resolve another owner case')
+    resolved=request('POST','/exceptions/'+case['id']+'/resolve',body=resolution)
+    parity(resolved,'Manual resolution preserves exact evidence, reason and revision in relational reads')
+    request('POST','/exceptions/'+case['id']+'/reopen',body={'expected_revision':resolved['revision']},status=403)
+    reopened=request('POST','/exceptions/'+case['id']+'/reopen','manager',{'expected_revision':resolved['revision']})
+    parity(reopened,'Manager reopening preserves prior resolution fields in relational reads')
+    check(reopened['data']['resolution']==resolved['data']['resolution'] and reopened['data']['evidence_id']==doc['id'],
+          'Reopening retains prior evidence and manual reason')
+    resolution['expected_revision']=resolved['revision']
+    request('POST','/exceptions/'+case['id']+'/resolve',body=resolution,status=409)
+    check(request('GET','/record/'+case['id'])==reopened,'Stale resolution cannot change the exception')
+    resolution['expected_revision']=reopened['revision']
+    again=request('POST','/exceptions/'+case['id']+'/resolve',body=resolution)
+    parity(again,'Re-resolved exception remains consistent across mutation, detail and collection reads')

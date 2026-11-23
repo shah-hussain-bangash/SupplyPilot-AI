@@ -18,7 +18,7 @@ def _timestamp(value):
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan', 'exception') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False):
@@ -26,6 +26,11 @@ def _query(kind, user, single=False):
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'exception':
+        fields = """h.resource_id,h.category,h.detail,h.owner_id AS owner,h.due_date,h.status,
+          h.resolution,h.evidence_id,h.resolution_reason,h.resolution_evidence,h.resolved_by,
+          h.resolved_at,h.matched_invoice_revision,h.source_snapshot"""
+        table = 'proc_exceptions'
     elif kind == 'plan':
         fields = """h.rfq_id,h.creator_id AS creator,h.status,h.digest,h.payload,
           h.approved_digest,h.approver_id AS approver,h.reason,h.expires_at,h.intent_id,h.order_id"""
@@ -80,7 +85,7 @@ def _query(kind, user, single=False):
     if user.role == 'supplier' and kind == 'offer':
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock','plan') else """ AND EXISTS
+        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock','plan','exception') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
     return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,r.data,
@@ -94,7 +99,10 @@ def _view(row, user):
     if row['source_revision'] != row['revision']:
         raise HTTPException(503, {'code':'projection_not_ready',
             'message':'Procurement read data is missing or out of date; contact support'})
-    data = deepcopy(row['data'])
+    if row['kind']=='exception' and not isinstance(row['source_snapshot'],dict):
+        raise HTTPException(503, {'code':'projection_not_ready',
+            'message':'Exception read snapshot is missing; contact support'})
+    data = deepcopy(row['source_snapshot'] if row['kind']=='exception' else row['data'])
     def field(key, value):
         # Preserve absent optional keys to keep the existing JSON contract exact.
         if key in data or value is not None:
@@ -102,6 +110,13 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'exception':
+        for key in ('resource_id','category','detail','owner','status','resolution','evidence_id',
+                    'resolution_reason','resolution_evidence','resolved_by','matched_invoice_revision'):
+            field(key,deepcopy(row[key]))
+        due=row['due_date']
+        field('due_date',due.isoformat() if hasattr(due,'isoformat') else due)
+        field('resolved_at',_timestamp(row['resolved_at']))
     elif row['kind'] == 'plan':
         for key in ('rfq_id','creator','status','digest','payload','approved_digest',
                     'approver','reason','intent_id','order_id'):
@@ -195,7 +210,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan'):return None
+    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
