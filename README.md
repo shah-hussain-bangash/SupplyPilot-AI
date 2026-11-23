@@ -36,8 +36,8 @@ flowchart LR
 - Partial receiving, accepted/rejected/quarantine quantities, invoice matching and recheck history.
 - Exception resolution, closure guards and scoped audit events.
 - PostgreSQL migrations through `0008_proc_inventory`, forced tenant RLS and synchronized relational projections.
-- Supplier, RFQ, quotation, purchase-order, receipt and invoice reads use relational fields while retaining source history and metadata. Writes and remaining record kinds retain the aggregate record model.
-- Read-only stock-balance and inbound-delivery projections synchronized from authoritative inventory records. Inventory portal reads retain the aggregate path.
+- Supplier, RFQ, quotation, purchase-order, receipt, invoice and inventory reads use relational fields while retaining source history and metadata. Writes and remaining record kinds retain the aggregate record model.
+- Read-only stock-balance and inbound-delivery projections synchronized from authoritative inventory records. Inventory portal reads use these projections and retain source metadata and extensions.
 - SQLite mode for a fresh local demo and automated tests.
 
 ## Stack
