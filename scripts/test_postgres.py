@@ -159,11 +159,11 @@ def main():
                   'Pre-existing API plan is backfilled into its projection')
             from postgres_exception_cases import prepare_exceptions,exception_checks
             with TestClient(app) as client:
-                prepared_exception_id=prepare_exceptions(client,portal_password,check)
+                prepared_exception_id,prepared_document_id,quarantined_document_id=prepare_exceptions(client,portal_password,check)
             before_exceptions=row_hashes()
             with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
                  patch('getpass.getpass',return_value=migrator_password):
-                command.upgrade(cfg,'head')
+                command.upgrade(cfg,'0010_proc_exceptions')
             check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
                   '0010_proc_exceptions','Database applies exception storage through Alembic')
             tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
@@ -173,9 +173,24 @@ def main():
                   'Exception migration preserves every pre-existing tenant row')
             check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_exceptions WHERE id='{prepared_exception_id}' AND status='resolved'")=='1',
                   'Pre-existing resolved API exception is backfilled')
+            before_documents=row_hashes()
+            with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+                 patch('getpass.getpass',return_value=migrator_password):
+                command.upgrade(cfg,'head')
+            check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+                  '0011_proc_documents','Database applies document storage through Alembic')
+            tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            check(len(tables)==20,'Document upgrade creates the 20-table checkpoint')
+            after_documents=row_hashes()
+            check(all(after_documents[t]==v for t,v in before_documents.items() if t!='alembic_version'),
+                  'Document migration preserves every pre-existing tenant row')
+            check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_documents WHERE id='{prepared_document_id}' AND status='review_required'")=='1',
+                  'Pre-existing reviewable API document is backfilled')
+            check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_documents WHERE id='{quarantined_document_id}' AND status='quarantined'")=='1',
+                  'Pre-existing quarantined API document is backfilled')
             tenant_tables=[t for t in tables if t!='alembic_version']
-            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='17',
-                  'All 17 tenant tables have enabled and forced RLS')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='19',
+                  'All 19 tenant tables have enabled and forced RLS')
             with engine.connect() as runtime:
                 role=runtime.execute(text('SELECT current_user')).scalar_one()
                 check(role=='supplypilot_app','Workflow uses the restricted runtime role')
@@ -222,15 +237,17 @@ def main():
             inventory_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             plan_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             exception_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
+            from postgres_document_cases import document_checks
+            document_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             if args.restore_check:
                 from postgres_restore_cases import restore_checks
                 restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
-                'checks':passed,'revision':'0010_proc_exceptions',
+                'checks':passed,'revision':'0011_proc_documents',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True,'document_storage_checked':True},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
