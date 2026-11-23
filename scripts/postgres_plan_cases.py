@@ -48,7 +48,7 @@ def plan_checks(sql,runtime_args,check):
     from psycopg.types.json import Jsonb
     def digest(payload):
         return hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
-    payload=json.loads(sql(clone,"SELECT data::jsonb->'payload' FROM records WHERE kind='plan' ORDER BY id LIMIT 1"))
+    payload=json.loads(sql(clone,"SELECT (data::jsonb->'payload')::text FROM records WHERE kind='plan' ORDER BY id LIMIT 1"))
     base={'rfq_id':payload['rfq_id'],'payload':payload,'digest':digest(payload),'status':'pending','creator':'buyer'}
     rid='plan-fixture-'+uuid4().hex[:10];foreign_rfq=rid+'-rfq';other=rid+'-other'
     foreign_payload={'rfq_id':foreign_rfq,'rfq_revision':1,'objective':'cost','currency':'AED',
@@ -76,7 +76,7 @@ def plan_checks(sql,runtime_args,check):
         with conn.transaction():tenant();insert(rid,base)
         check(sql(clone,"SELECT status,source_revision,digest FROM proc_plans WHERE id='"+rid+"'")=='pending|1|'+base['digest'],
               'New pending plan synchronizes exact digest and revision')
-        check(json.loads(sql(clone,"SELECT payload FROM proc_plans WHERE id='"+rid+"'"))==payload,
+        check(json.loads(sql(clone,"SELECT payload::text FROM proc_plans WHERE id='"+rid+"'"))==payload,
               'Complete sourcing payload is preserved without changing its facts')
         approved=dict(deepcopy(base),status='approved',approver='manager',reason='Synthetic manager review',
                       approved_digest=base['digest'],expires_at='2030-01-01T00:00:00+00:00')
@@ -150,3 +150,4 @@ def plan_checks(sql,runtime_args,check):
         with conn.transaction():
             tenant('other');conn.execute('DELETE FROM records WHERE id=%s',(other,));conn.execute('DELETE FROM records WHERE id=%s',(foreign_rfq,))
     check(hashes(clone)==clone_before,'Every original table remains unchanged after fixture cleanup')
+
