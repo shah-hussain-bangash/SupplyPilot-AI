@@ -131,7 +131,7 @@ def main():
             before_inventory=row_hashes()
             with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
                  patch('getpass.getpass',return_value=migrator_password):
-                command.upgrade(cfg,'head')
+                command.upgrade(cfg,'0008_proc_inventory')
             check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
                   '0008_proc_inventory','Seeded database applies the inventory migration through Alembic')
             tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
@@ -139,9 +139,27 @@ def main():
             after_inventory=row_hashes()
             check(all(after_inventory[t]==v for t,v in before_inventory.items() if t!='alembic_version'),
                   'Inventory migration preserves every pre-existing tenant row')
+            from fastapi.testclient import TestClient
+            from supplypilot.main import app
+            from postgres_plan_cases import prepare_plan,plan_checks
+            with TestClient(app) as client:
+                prepared_plan_id=prepare_plan(client,portal_password,check)
+            before_plans=row_hashes()
+            with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+                 patch('getpass.getpass',return_value=migrator_password):
+                command.upgrade(cfg,'head')
+            check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+                  '0009_proc_plans','Database applies plan storage through Alembic')
+            tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            check(len(tables)==17,'Plan storage upgrade creates the 17-table checkpoint')
+            after_plans=row_hashes()
+            check(all(after_plans[t]==v for t,v in before_plans.items() if t!='alembic_version'),
+                  'Plan migration preserves every pre-existing tenant row')
+            check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_plans WHERE id='{prepared_plan_id}' AND status='pending'")=='1',
+                  'Pre-existing API plan is backfilled into its projection')
             tenant_tables=[t for t in tables if t!='alembic_version']
-            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='15',
-                  'All 15 tenant tables have enabled and forced RLS')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='16',
+                  'All 16 tenant tables have enabled and forced RLS')
             with engine.connect() as runtime:
                 role=runtime.execute(text('SELECT current_user')).scalar_one()
                 check(role=='supplypilot_app','Workflow uses the restricted runtime role')
@@ -186,15 +204,16 @@ def main():
                       'Rejected invoice request adds no extra invoice audit event')
             from postgres_inventory_cases import inventory_checks
             inventory_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
+            plan_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             if args.restore_check:
                 from postgres_restore_cases import restore_checks
                 restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
-                'checks':passed,'revision':'0008_proc_inventory',
+                'checks':passed,'revision':'0009_proc_plans',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
