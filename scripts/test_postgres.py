@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--docker',action='store_true',required=True,
                         help='Create and remove a dedicated PostgreSQL 17 container')
     parser.add_argument('--concurrency',action='store_true',help='Prove overlapping execution, reconciliation, receipt and invoice requests')
+    parser.add_argument('--restore-check',action='store_true',help='Verify a dump restored into a second disposable database')
     parser.add_argument('--repository',type=Path,default=Path(__file__).resolve().parents[1])
     parser.add_argument('--report',type=Path)
     args=parser.parse_args()
@@ -164,12 +165,15 @@ def main():
                       'Rejected receipt request adds no extra receipt audit event')
                 check(sql('supplypilot_dev',f"SELECT count(*) FROM audit WHERE action='order.invoice_reviewed' AND resource='{oid}'")=='2',
                       'Rejected invoice request adds no extra invoice audit event')
+            if args.restore_check:
+                from postgres_restore_cases import restore_checks
+                restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
                 'checks':passed,'revision':'0007_proc_fulfillment',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
