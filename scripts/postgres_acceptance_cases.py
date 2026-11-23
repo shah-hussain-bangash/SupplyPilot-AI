@@ -1,11 +1,8 @@
-"""Synthetic acceptance cases shared by the disposable PostgreSQL runner.
-
-All controlled projection probes are restored in finally blocks.
-"""
-from datetime import date, timedelta
+"""Procurement API and relational read acceptance cases."""
+from datetime import date,timedelta
 from decimal import Decimal
-from uuid import uuid4
 import json
+from uuid import uuid4
 
 def workflow(client, password, check, race=None):
     tokens = {}
@@ -27,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -86,12 +83,14 @@ def workflow(client, password, check, race=None):
                        'objective':'cost','budget':'10000.00'},status=201)
     check(Decimal(plan['data']['payload']['total'])==Decimal('7250.00'),
           'API sourcing creates the expected AED 7250 purchase scenario')
+    check(record(plan['id'])==plan,'Pending plan response matches relational detail')
     check(len(plan['data']['payload']['allocations'])==2,'Scenario includes both supplier allocations')
     post('/plans/'+plan['id']+'/decision',{'expected_revision':plan['revision'],
          'decision':'approved','reason':'Buyer must not approve this scenario'},'buyer',403)
     check(True,'Buyer cannot approve a purchasing scenario')
     plan=post('/plans/'+plan['id']+'/decision',{'expected_revision':plan['revision'],
          'decision':'approved','reason':'Synthetic budget and evidence approved by separate manager'},'manager')
+    check(record(plan['id'])==plan,'Approved plan response matches relational detail')
     key='workflow-'+suffix
     execute={'expected_revision':plan['revision'],'key':key}
     if race:
@@ -102,6 +101,7 @@ def workflow(client, password, check, race=None):
         intent=outcomes[0].json()
     else:
         intent=post('/plans/'+plan['id']+'/execute',execute,status=202)
+    check(record(plan['id'])['data']['status']=='execution_pending','Execution-pending plan reads synchronize')
     repeated=post('/plans/'+plan['id']+'/execute',execute,status=202)
     check(intent['id']==repeated['id'],'Repeated execution key returns the same intent')
     uncertain=post('/executions/'+intent['id']+'/dispatch',{'simulate_timeout':True})
@@ -117,6 +117,7 @@ def workflow(client, password, check, race=None):
     check(confirmed['state']=='confirmed','Reconciliation confirms the durable simulator purchase')
     again=post('/executions/'+intent['id']+'/reconcile',{})
     check(again['external_id']==confirmed['external_id'],'Repeated reconciliation returns the same external order')
+    check(record(plan['id'])['data']['status']=='executed','Executed plan reads synchronize')
     orders=request('GET','/records/order')['items']
     case_orders=[x for x in orders if x['data']['plan_id']==plan['id']]
     check(len(case_orders)==1,'Reconciliation creates exactly one local purchase order')
@@ -202,11 +203,11 @@ def read_checks(client,password,check,sql,clone):
     from supplypilot.security import lookup_identity
     from supplypilot.domain import records,view
     tokens={}
-    for role in ('buyer','warehouse','finance','supplier-gulf','supplier-desert','other-buyer','auditor'):
+    for role in ('buyer','warehouse','finance','supplier-gulf','supplier-desert','other-buyer','auditor','manager'):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -414,3 +415,36 @@ def read_checks(client,password,check,sql,clone):
     finally:
         sql(clone,"UPDATE proc_rfqs h SET source_revision=r.revision FROM records r WHERE r.tenant=h.tenant AND r.id=h.id AND h.tenant='demo' AND h.id='rfq-demo'")
 
+
+
+    plan_id=sql(clone,"SELECT id FROM proc_plans WHERE tenant='demo' ORDER BY id LIMIT 1")
+    saved=sql(clone,"SELECT to_jsonb(p)::text FROM proc_plans p WHERE tenant='demo' AND id='"+plan_id+"'")
+    for role in ('supplier-gulf','supplier-desert','other-buyer'):
+        response=client.get('/api/v1/record/'+plan_id,headers=tokens[role])
+        check(response.status_code==404,role+' cannot read demo plan detail')
+    def restore_plan():
+        sql(clone,"DELETE FROM proc_plans WHERE tenant='demo' AND id='"+plan_id+"'")
+        sql(clone,"INSERT INTO proc_plans SELECT * FROM jsonb_populate_record(NULL::proc_plans,'"+saved.replace("'","''")+"')")
+    try:
+        sql(clone,"UPDATE proc_plans SET reason='Relational plan probe',payload=payload || '{\"projection_extension\":{\"note\":\"retained\"}}'::jsonb WHERE tenant='demo' AND id='"+plan_id+"'")
+        for path in ('/record/'+plan_id,'/records/plan'):
+            response=client.get('/api/v1'+path,headers=tokens['buyer'])
+            check(response.status_code==200,'Plan relational probe succeeds for '+path)
+            item=response.json() if path.startswith('/record/') else next(x for x in response.json()['items'] if x['id']==plan_id)
+            check(item['data']['reason']=='Relational plan probe' and item['data']['payload']['projection_extension']=={'note':'retained'},'Plan reads consume projected approval metadata and full payload for '+path)
+    finally:restore_plan()
+    for missing in (False,True):
+        try:
+            if missing:sql(clone,"DELETE FROM proc_plans WHERE tenant='demo' AND id='"+plan_id+"'")
+            else:sql(clone,"UPDATE proc_plans SET source_revision=source_revision+1 WHERE tenant='demo' AND id='"+plan_id+"'")
+            for path in ('/record/'+plan_id,'/records/plan'):
+                response=client.get('/api/v1'+path,headers=tokens['buyer'])
+                check(response.status_code==503 and response.json()['detail']['code']=='projection_not_ready',('Missing' if missing else 'Stale')+' plan projection fails closed for '+path)
+        finally:restore_plan()
+    try:
+        sql(clone,"UPDATE proc_plans SET expires_at='2020-01-01T00:00:00.123400+00:00' WHERE tenant='demo' AND id='"+plan_id+"'")
+        detail=client.get('/api/v1/record/'+plan_id,headers=tokens['buyer'])
+        page=client.get('/api/v1/records/plan',headers=tokens['buyer'])
+        item=next(x for x in page.json()['items'] if x['id']==plan_id)
+        check(detail.status_code==200 and item==detail.json() and item['data']['expires_at']=='2020-01-01T00:00:00.123400+00:00','Expired historical plan stays readable with exact timestamp precision')
+    finally:restore_plan()

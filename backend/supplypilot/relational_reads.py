@@ -18,7 +18,7 @@ def _timestamp(value):
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False):
@@ -26,6 +26,10 @@ def _query(kind, user, single=False):
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'plan':
+        fields = """h.rfq_id,h.creator_id AS creator,h.status,h.digest,h.payload,
+          h.approved_digest,h.approver_id AS approver,h.reason,h.expires_at,h.intent_id,h.order_id"""
+        table = 'proc_plans'
     elif kind == 'stock':
         fields = """h.sku,h.usable,h.reserved,h.quarantine,h.as_of,h.source,
           (SELECT COALESCE(jsonb_agg(l.source_snapshot || jsonb_build_object(
@@ -76,7 +80,7 @@ def _query(kind, user, single=False):
     if user.role == 'supplier' and kind == 'offer':
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock') else """ AND EXISTS
+        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock','plan') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
     return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,r.data,
@@ -98,6 +102,11 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'plan':
+        for key in ('rfq_id','creator','status','digest','payload','approved_digest',
+                    'approver','reason','intent_id','order_id'):
+            field(key,deepcopy(row[key]))
+        field('expires_at',_timestamp(row['expires_at']))
     elif row['kind'] == 'stock':
         if len(row['inbound']) != len(data.get('inbound', [])):
             raise HTTPException(503, {'code':'projection_not_ready',
@@ -186,7 +195,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock'):return None
+    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
