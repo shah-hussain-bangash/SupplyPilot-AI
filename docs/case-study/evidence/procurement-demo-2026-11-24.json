@@ -1,0 +1,74 @@
+{
+  "observed_on": "2026-11-24",
+  "source_revision": "11b6204b3d7fcc50941e7c1d67d392cc62bac76e",
+  "mode": "local ERP simulator; synthetic data only",
+  "browser": {
+    "result": "passed",
+    "database": "fresh temporary SQLite",
+    "checks_passed": 27,
+    "checks": [
+      "Browser login succeeds for buyer",
+      "All 18 buyer screens load without an alert",
+      "Buyer cannot approve purchasing",
+      "Browser login succeeds for technical",
+      "Technical review accepts both synthetic supplier certificates",
+      "Browser login succeeds for buyer",
+      "Sourcing displays AED 7250",
+      "Browser login succeeds for manager",
+      "Manager approves the scenario",
+      "Browser login succeeds for buyer",
+      "Timeout displays uncertain execution",
+      "Reconciliation confirms the purchase",
+      "Browser login succeeds for warehouse",
+      "Gulf receipt details retain 30 accepted pieces",
+      "Browser login succeeds for finance",
+      "Desert invoice is mismatched before receiving",
+      "Browser login succeeds for warehouse",
+      "Browser login succeeds for finance",
+      "Invoice recheck preserves identity, exact price and mismatch history",
+      "Browser login succeeds for buyer",
+      "Closed order retains AED 7250 and 55 accepted pieces",
+      "Workspace remains accessible at a mobile viewport",
+      "Browser login succeeds for supplier-gulf",
+      "Supplier sees restricted navigation and no competitor quotations",
+      "Browser login succeeds for auditor",
+      "Auditor sees the order closure event",
+      "No browser exceptions or server errors occurred"
+    ],
+    "command": "python scripts/test_browser.py --prepare --output test-results/architecture-demo",
+    "uses_real_browser_and_api": true,
+    "temporary_server_and_data_removed": true
+  },
+  "postgresql": {
+    "result": "passed",
+    "execution": "fresh hosted rerun of PostgreSQL migrations and workflow job",
+    "source_revision": "11b6204b3d7fcc50941e7c1d67d392cc62bac76e",
+    "run_url": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45172664175/attempts/2",
+    "job_url": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45172664175/job/138231976243",
+    "command": "python scripts/test_postgres.py --docker --concurrency --restore-check",
+    "verified_scope": [
+      "fresh PostgreSQL migrations through 0011_proc_documents",
+      "tenant isolation and context reset",
+      "read-only runtime projections",
+      "simulated timeout and reconciliation",
+      "concurrent transaction cases",
+      "dump/restore row and definition parity",
+      "restored tenant visibility and protected grants"
+    ],
+    "overall_workflow_status": "failure; retained browser failure from the original attempt, PostgreSQL rerun passed"
+  },
+  "historical_pr16": {
+    "pull_request": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/pull/16",
+    "tested_revision": "0bc986558e8a0f5eb7ec925f2d4362fb1f48e39e",
+    "run_url": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45171318136",
+    "job_url": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45171318136/job/137681289893",
+    "reported_postgresql_checks": 957
+  },
+  "limits": [
+    "Local Docker API access denied at npipe:////./pipe/docker_engine; PostgreSQL exercised through connected hosted Actions instead.",
+    "Merge-run browser job timed out locating the first 30-piece receipt row. This was not reproduced by the local 27-check browser run. No product fix or clean overall-main-CI claim is made.",
+    "SQLite browser coverage and PostgreSQL integration coverage are separate; no PostgreSQL-backed browser run.",
+    "Database restore uses roles in the same disposable cluster; it is not a complete application/file/provider recovery.",
+    "Live ERP, email, payments, external models, production identities and deployments were not exercised."
+  ]
+}
