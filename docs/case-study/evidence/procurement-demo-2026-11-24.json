@@ -70,5 +70,16 @@
     "SQLite browser coverage and PostgreSQL integration coverage are separate; no PostgreSQL-backed browser run.",
     "Database restore uses roles in the same disposable cluster; it is not a complete application/file/provider recovery.",
     "Live ERP, email, payments, external models, production identities and deployments were not exercised."
-  ]
+  ],
+  "browser_wait_follow_up": {
+    "pull_request": "https://github.com/shah-hussain-bangash/SupplyPilot-AI/pull/17",
+    "base_revision": "11b6204b3d7fcc50941e7c1d67d392cc62bac76e",
+    "change": "Browser acceptance helper waits for the actual mutation response to be rendered and for inspected ID/revision to match; application code unchanged.",
+    "normal_browser_checks_passed": 27,
+    "delayed_invoice_refresh_checks_passed": 27,
+    "delay_ms": 400,
+    "delay_scope": "Test-only temporary interception delays real invoice-list requests before continuing them; no response payload is mocked.",
+    "reason": "PR17 initial browser CI inspected invoice revision 1 immediately after a successful revision 2 recheck.",
+    "local_test_files_removed": true
+  }
 }

@@ -334,6 +334,8 @@ The browser command creates a fresh temporary SQLite database, synthetic account
 
 **Limits and dependency:** local Docker access was denied at `npipe:////./pipe/docker_engine`, so the connected hosted PostgreSQL job supplied the fresh database evidence. The main merge run still reports a browser failure from attempt 1 (receipt-row locator timeout); the local walkthrough passed without reproducing it. This update does not claim an all-green main workflow or fix an unconfirmed product regression. Browser SQLite coverage and PostgreSQL integration coverage remain separate. Restore reuses roles in one disposable cluster and does not restore uploaded files or external provider state. Live ERP, email and payments remain disconnected.
 
+**Browser-test follow-up ([PR #17](https://github.com/shah-hussain-bangash/SupplyPilot-AI/pull/17)):** the initial PR run also read invoice revision 1 just after a successful revision 2 recheck. Its acceptance helper now waits for the saved mutation response to be rendered and checks the inspected record ID/revision. Application code is unchanged. The revised helper passed 27 local browser checks normally and 27 with real invoice-list requests delayed by 400 ms. Use PR #17's reviewed head (`gh pr checkout 17` in a disposable checkout) to exercise this follow-up; the commands above intentionally retain the original pinned baseline. Historical run failures remain visible in the evidence record.
+
 A ten-minute demonstration can connect business judgment to executable engineering:
 
 1. **Requirements and evidence:** open a synthetic RFQ and show its reviewed revision and source material.
