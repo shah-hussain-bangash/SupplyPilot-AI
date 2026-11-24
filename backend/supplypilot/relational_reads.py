@@ -18,14 +18,22 @@ def _timestamp(value):
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan', 'exception') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan', 'exception', 'document') and db.get_bind().dialect.name == 'postgresql'
 
 
-def _query(kind, user, single=False):
+def _query(kind, user, single=False, include_pages=False):
     # Table names are fixed here; request values are always bound parameters.
     if kind == 'supplier':
         fields = "h.name,h.category,h.approved,h.simulated,NULL::jsonb AS lines,NULL::jsonb AS invited"
         table = 'proc_suppliers'
+    elif kind == 'document':
+        pages = """(SELECT COALESCE(jsonb_agg(p.text_content ORDER BY p.page_index),'[]'::jsonb)
+          FROM public.proc_document_pages p WHERE p.tenant=r.tenant AND p.document_id=r.id)""" if include_pages else 'NULL::jsonb'
+        fields = """h.filename,h.sha256,h.status,h.error,h.supplier_id,h.parser,h.malware_scanned,
+          h.page_count,h.source_snapshot,
+          (SELECT count(*) FROM public.proc_document_pages p
+           WHERE p.tenant=r.tenant AND p.document_id=r.id) AS stored_page_count,"""+pages+' AS pages'
+        table = 'proc_documents'
     elif kind == 'exception':
         fields = """h.resource_id,h.category,h.detail,h.owner_id AS owner,h.due_date,h.status,
           h.resolution,h.evidence_id,h.resolution_reason,h.resolution_evidence,h.resolved_by,
@@ -82,13 +90,14 @@ def _query(kind, user, single=False):
            FROM public.proc_rfq_invitations i WHERE i.tenant=r.tenant AND i.rfq_id=r.id) AS invited"""
         table = 'proc_rfqs'
     visibility = ''
-    if user.role == 'supplier' and kind == 'offer':
+    if user.role == 'supplier' and kind in ('offer','document'):
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock','plan','exception') else """ AND EXISTS
+        visibility = (' AND false' if kind in ('supplier','order','receipt','invoice','stock','plan','exception','document') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
-    return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,r.data,
+    source_data="r.data::jsonb-'pages' AS data" if kind=='document' else 'r.data'
+    return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,{source_data},
         h.source_revision,{fields}
         FROM public.records r LEFT JOIN public.{table} h ON h.tenant=r.tenant AND h.id=r.id
         WHERE r.tenant=:tenant AND r.kind=:kind {visibility}
@@ -102,7 +111,12 @@ def _view(row, user):
     if row['kind']=='exception' and not isinstance(row['source_snapshot'],dict):
         raise HTTPException(503, {'code':'projection_not_ready',
             'message':'Exception read snapshot is missing; contact support'})
-    data = deepcopy(row['source_snapshot'] if row['kind']=='exception' else row['data'])
+    if row['kind']=='document' and (not isinstance(row['source_snapshot'],dict) or
+        row['stored_page_count']!=row['page_count'] or
+        (row['pages'] is not None and len(row['pages'])!=row['page_count'])):
+        raise HTTPException(503, {'code':'projection_not_ready',
+            'message':'Document metadata or parsed pages are incomplete; contact support'})
+    data = deepcopy(row['source_snapshot'] if row['kind'] in ('exception','document') else row['data'])
     def field(key, value):
         # Preserve absent optional keys to keep the existing JSON contract exact.
         if key in data or value is not None:
@@ -110,6 +124,10 @@ def _view(row, user):
     if row['kind'] == 'supplier':
         for key in ('name','category','approved','simulated'):
             field(key, row[key])
+    elif row['kind'] == 'document':
+        for key in ('filename','sha256','status','error','supplier_id','parser','malware_scanned'):
+            field(key,deepcopy(row[key]))
+        data.pop('pages',None)
     elif row['kind'] == 'exception':
         for key in ('resource_id','category','detail','owner','status','resolution','evidence_id',
                     'resolution_reason','resolution_evidence','resolved_by','matched_invoice_revision'):
@@ -210,8 +228,23 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception'):return None
+    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
     return _view(row,user)
+
+
+
+def _document_evidence_view(row,user):
+    metadata=_view(row,user)['data']
+    return {'document_id':row['id'],'sha256':metadata['sha256'],
+            'pages':deepcopy(row['pages']),'parser':metadata['parser']}
+
+
+def document_evidence(db,user,rid):
+    if not _ready(db,'document'):return None
+    params={'tenant':user.tenant,'kind':'document','supplier_id':user.supplier_id,'rid':rid}
+    row=db.execute(text(_query('document',user,True,include_pages=True)),params).mappings().one_or_none()
+    if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
+    return _document_evidence_view(row,user)

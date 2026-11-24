@@ -184,6 +184,8 @@ async def upload(file:UploadFile=File(...),user=Depends(actor),db=Depends(get_db
 
 @app.get('/api/v1/documents/{rid}/evidence')
 def doc_evidence(rid:str,user=Depends(actor),db=Depends(get_db)):
+    projected=relational_reads.document_evidence(db,user,rid)
+    if projected is not None:return projected
     d=get(db,user,rid,'document')
     return {'document_id':d.id,'sha256':d.data['sha256'],'pages':d.data.get('pages',[]),'parser':d.data['parser']}
 
