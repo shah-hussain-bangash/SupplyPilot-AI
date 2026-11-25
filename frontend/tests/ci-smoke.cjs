@@ -36,10 +36,25 @@ const path=require('node:path');
     const pending=page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST');
     await button.click();const response=await pending;
     assert(response.ok(),'Mutation failed: '+response.status()+' '+new URL(response.url()).pathname);
-    await page.getByRole('status').waitFor();await ready();
+    const saved=await response.json();
+    await page.getByRole('status').waitFor();
+    // A previous detail/status can still be mounted while React refreshes the lists.
+    await page.waitForFunction(expected=>{
+      const refresh=[...document.querySelectorAll('main button')].find(x=>x.textContent==='Refresh');
+      const pre=document.querySelector('.detail pre');
+      return refresh && !refresh.disabled && pre && JSON.stringify(JSON.parse(pre.textContent))===JSON.stringify(expected);
+    },saved);
+    await ready();return saved;
   }
   const button=name=>page.getByRole('button',{name,exact:true});
-  async function inspect(row){await row.getByRole('button',{name:'Inspect',exact:true}).click();await page.locator('.detail pre').waitFor();return JSON.parse(await page.locator('.detail pre').innerText());}
+  async function inspect(row,expected){
+    await row.getByRole('button',{name:'Inspect',exact:true}).click();
+    await page.waitForFunction(({id,revision})=>{
+      const pre=document.querySelector('.detail pre');if(!pre)return false;
+      const shown=JSON.parse(pre.textContent);return shown.id===id && shown.revision===revision;
+    },{id:expected.id,revision:expected.revision});
+    return JSON.parse(await page.locator('.detail pre').innerText());
+  }
   try{
     await page.goto(base+'/#/portal');
     await login('buyer');
@@ -57,28 +72,28 @@ const path=require('node:path');
     await mutate(button('Simulate timeout'));assert((await page.locator('main').innerText()).includes('uncertain'));pass('Timeout displays uncertain execution');
     await mutate(button('Reconcile'));assert((await page.locator('main').innerText()).includes('confirmed'));pass('Reconciliation confirms the purchase');
     await logout();await login('warehouse');await nav('Receiving');
-    await page.getByLabel('Accepted pieces',{exact:true}).fill('30');await mutate(button('Record inspected receipt'));
-    const receipt=await inspect(page.locator('tbody tr').filter({hasText:'30'}));
+    await page.getByLabel('Accepted pieces',{exact:true}).fill('30');const savedReceipt=await mutate(button('Record inspected receipt'));
+    const receipt=await inspect(page.locator('tbody tr').filter({hasText:'30'}),savedReceipt);
     assert.equal(receipt.data.accepted,30);assert.equal(receipt.data.supplier_id,'gulf');pass('Gulf receipt details retain 30 accepted pieces');
     await logout();await login('finance');await nav('Invoices');await mutate(button('Match invoice'));
     await page.getByLabel('Allocation line index',{exact:true}).fill('1');
     await page.getByLabel('Supplier invoice number',{exact:true}).fill('INV-002');
     await page.getByLabel('Invoice pieces',{exact:true}).fill('25');
-    await page.getByLabel('Material unit price AED',{exact:true}).fill('128.00');await mutate(button('Match invoice'));
-    let invoice=await inspect(page.locator('tbody tr').filter({hasText:'INV-002'}));
+    await page.getByLabel('Material unit price AED',{exact:true}).fill('128.00');const savedInvoice=await mutate(button('Match invoice'));
+    let invoice=await inspect(page.locator('tbody tr').filter({hasText:'INV-002'}),savedInvoice);
     assert.equal(invoice.data.status,'mismatch');assert.equal(invoice.data.quantity,25);pass('Desert invoice is mismatched before receiving');
     const invoiceId=invoice.id;
     await logout();await login('warehouse');await nav('Receiving');
     await page.getByLabel('Allocation line index (starts at 0)',{exact:true}).fill('1');
     await page.getByLabel('Accepted pieces',{exact:true}).fill('25');await mutate(button('Record inspected receipt'));
     await logout();await login('finance');await nav('Invoices');
-    await mutate(page.locator('tbody tr').filter({hasText:'INV-002'}).getByRole('button',{name:'Recheck invoice',exact:true}));
-    invoice=await inspect(page.locator('tbody tr').filter({hasText:'INV-002'}));
+    const recheckedInvoice=await mutate(page.locator('tbody tr').filter({hasText:'INV-002'}).getByRole('button',{name:'Recheck invoice',exact:true}));
+    invoice=await inspect(page.locator('tbody tr').filter({hasText:'INV-002'}),recheckedInvoice);
     assert.equal(invoice.id,invoiceId);assert.equal(invoice.revision,2);assert.equal(invoice.data.status,'matched');
     assert.equal(invoice.data.unit_price,'128.00');assert.equal(invoice.data.assessment_history[0].data.status,'mismatch');
     pass('Invoice recheck preserves identity, exact price and mismatch history');
-    await logout();await login('buyer');await nav('Purchase orders');await mutate(button('Close fulfilled order'));
-    const order=await inspect(page.locator('tbody tr').filter({hasText:'closed'}));
+    await logout();await login('buyer');await nav('Purchase orders');const closedOrder=await mutate(button('Close fulfilled order'));
+    const order=await inspect(page.locator('tbody tr').filter({hasText:'closed'}),closedOrder);
     assert.equal(order.data.status,'closed');assert.equal(order.data.total,'7250.00');
     assert.equal(order.data.lines.reduce((n,x)=>n+x.accepted,0),55);pass('Closed order retains AED 7250 and 55 accepted pieces');
     await page.screenshot({path:path.join(out,'closed-order.png'),fullPage:true});
