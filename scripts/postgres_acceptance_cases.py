@@ -24,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock','plan','exception'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','job'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -194,6 +194,7 @@ def workflow(client, password, check, race=None):
     events=request('GET','/audit','auditor')
     check(any(x['action']=='order.closed' and x['resource']==oid for x in events),
           'Auditor can read the new order closure event')
+    job_workflow(client,password,check,tokens)
     exception_workflow(client,password,check,tokens)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
@@ -209,7 +210,7 @@ def read_checks(client,password,check,sql,clone):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','job'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -490,6 +491,9 @@ def read_checks(client,password,check,sql,clone):
         sql(clone,"UPDATE proc_exceptions SET resolved_at='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+timed+"'")
 
 
+    job_read_probes(client,check,sql,clone,tokens)
+
+
 def exception_workflow(client,password,check,tokens):
     from supplypilot.db import Session
     from supplypilot.security import lookup_identity
@@ -531,3 +535,82 @@ def exception_workflow(client,password,check,tokens):
     resolution['expected_revision']=reopened['revision']
     again=request('POST','/exceptions/'+case['id']+'/resolve',body=resolution)
     parity(again,'Re-resolved exception remains consistent across mutation, detail and collection reads')
+
+
+def job_read_probes(client,check,sql,clone,tokens):
+    job_id=sql(clone,"SELECT id FROM proc_document_jobs WHERE tenant='demo' ORDER BY id LIMIT 1")
+    saved=sql(clone,"SELECT to_jsonb(j)::text FROM proc_document_jobs j WHERE tenant='demo' AND id='"+job_id+"'")
+    where=" WHERE tenant='demo' AND id='"+job_id+"'"
+    def restore():
+        sql(clone,'DELETE FROM proc_document_jobs'+where)
+        sql(clone,"INSERT INTO proc_document_jobs SELECT * FROM jsonb_populate_record(NULL::proc_document_jobs,'"+saved.replace("'","''")+"')")
+    paths=('/record/'+job_id,'/records/job')
+    for role in ('supplier-gulf','supplier-desert','other-buyer'):
+        response=client.get('/api/v1/record/'+job_id,headers=tokens[role])
+        check(response.status_code==404,role+' cannot read internal processing job')
+    try:
+        sql(clone,"UPDATE proc_document_jobs SET result=result || '{\"read_extension\":{\"sequence\":[2,1,2],\"note\":\"Unicode — اختبار\"}}'::jsonb,source_snapshot=source_snapshot || '{\"read_metadata\":true}'::jsonb"+where)
+        for path in paths:
+            response=client.get('/api/v1'+path,headers=tokens['buyer'])
+            check(response.status_code==200,'Projected job read succeeds for '+path)
+            item=response.json() if path.startswith('/record/') else next(x for x in response.json()['items'] if x['id']==job_id)
+            check(item['data']['result']['read_extension']=={'sequence':[2,1,2],'note':'Unicode — اختبار'}
+                  and item['data']['read_metadata'] is True,
+                  'Job reads consume complete projected result and metadata for '+path)
+    finally:restore()
+    for corruption in ('stale revision','candidate count','missing projection'):
+        try:
+            if corruption=='stale revision':sql(clone,'UPDATE proc_document_jobs SET source_revision=source_revision+1'+where)
+            elif corruption=='candidate count':sql(clone,'UPDATE proc_document_jobs SET candidate_count=candidate_count+1'+where)
+            else:sql(clone,'DELETE FROM proc_document_jobs'+where)
+            for path in paths:
+                response=client.get('/api/v1'+path,headers=tokens['buyer'])
+                check(response.status_code==503 and response.json()['detail']['code']=='projection_not_ready',
+                      'Job '+corruption+' fails closed for '+path)
+        finally:restore()
+
+
+def job_workflow(client,password,check,tokens):
+    from fastapi.encoders import jsonable_encoder
+    from supplypilot.db import Session
+    from supplypilot.security import lookup_identity
+    from supplypilot.domain import get,view
+    text='SYNTHETIC JOB READ TEST ONLY\nSKU: PIPE-DN50\nQuantity: 30\nGrade: ASTM A106 Grade B\nUnicode — اختبار\n'
+    for role in ('buyer','supplier-gulf'):
+        response=client.post('/api/v1/documents',headers=tokens[role],
+            files={'file':('job-read-demo.txt',text.encode('utf-8'),'text/plain')})
+        check(response.status_code==201,role+' job fixture upload succeeds')
+        document=response.json()
+        response=client.get('/api/v1/records/job',headers=tokens['buyer'])
+        check(response.status_code==200,'Internal processing job collection remains readable')
+        jobs=[x for x in response.json()['items'] if x['data']['document_id']==document['id']]
+        check(len(jobs)==1,role+' upload creates exactly one completed processing job')
+        job=jobs[0]
+        detail=client.get('/api/v1/record/'+job['id'],headers=tokens['buyer'])
+        with Session() as db:
+            buyer=lookup_identity(db,'buyer',by_username=True)
+            expected=jsonable_encoder(view(get(db,buyer,job['id']),buyer))
+        check(detail.status_code==200 and detail.json()==job==expected,
+              'New job collection, detail and authoritative result agree exactly')
+        result=job['data']['result']
+        check(result['pages']==[text] and len(result['candidates'])==3,
+              'Processing result preserves Unicode source text and three anchored candidates')
+        check(all(x['reviewed'] is False and text[x['start']:x['end']]==x['raw'] for x in result['candidates'])
+              and 'Human review required' in result['flags'],
+              'Read cutover preserves unreviewed candidates, exact text offsets and human-review flags')
+        check('candidate_count' not in job['data'] and 'model_version' not in result,
+              'Deterministic result retains its existing API shape')
+        for denied in ('supplier-gulf','supplier-desert','other-buyer'):
+            response=client.get('/api/v1/record/'+job['id'],headers=tokens[denied])
+            check(response.status_code==404,denied+' cannot inspect new processing job')
+    for role in ('supplier-gulf','supplier-desert','other-buyer'):
+        response=client.get('/api/v1/records/job',headers=tokens[role])
+        check(response.status_code==200 and response.json()['items']==[] and response.json()['total']==0,
+              role+' job collection excludes internal processing results')
+    before=client.get('/api/v1/records/job',headers=tokens['buyer']).json()['total']
+    response=client.post('/api/v1/documents',headers=tokens['buyer'],
+        files={'file':('quarantined-job.pdf',b'NOT A PDF','application/pdf')})
+    check(response.status_code==201 and response.json()['data']['status']=='quarantined',
+          'Unreadable source remains quarantined')
+    after=client.get('/api/v1/records/job',headers=tokens['buyer']).json()['total']
+    check(after==before,'Quarantined upload creates no fabricated completed job')
