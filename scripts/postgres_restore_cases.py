@@ -46,14 +46,14 @@ def restore_checks(docker,container,admin_args,runtime_password,check,case):
         check(restored_hashes[table]==before[table],table+' restores every logical row and row count')
     for label,query in CATALOG_CHECKS.items():
         check(rows(restored,query)==definitions[label],label+' restored exactly')
-    check(rows(restored,'SELECT version_num FROM public.alembic_version')==[('0012_proc_document_jobs',)],
+    check(rows(restored,'SELECT version_num FROM public.alembic_version')==[('0013_proc_customer_quotes',)],
           'Restored database retains the migration revision')
     check(rows(restored,'SELECT status,total::text FROM public.proc_orders WHERE id=%s',
           (case['order_id'],))==[('closed','7250.00')],
           'Restored closed order retains its exact AED 7250 total')
     check(rows(restored,"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-               "WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")==[(20,)],
-          'Restored database forces RLS on all 20 tenant tables')
+               "WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")==[(21,)],
+          'Restored database forces RLS on all 21 tenant tables')
 
     runtime_args=dict(admin_args,dbname=restored,user='supplypilot_app',password=runtime_password)
     tenant_tables=[t for t in tables if t!='alembic_version']
