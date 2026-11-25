@@ -420,7 +420,7 @@ def read_checks(client,password,check,sql,clone):
 
 
 
-    plan_id=sql(clone,"SELECT id FROM proc_plans WHERE tenant='demo' ORDER BY id LIMIT 1")
+    plan_id=sql(clone,"SELECT p.id FROM proc_plans p WHERE p.tenant='demo' AND NOT EXISTS (SELECT 1 FROM proc_customer_quotes q WHERE q.tenant=p.tenant AND q.plan_id=p.id) ORDER BY p.id LIMIT 1")
     saved=sql(clone,"SELECT to_jsonb(p)::text FROM proc_plans p WHERE tenant='demo' AND id='"+plan_id+"'")
     for role in ('supplier-gulf','supplier-desert','other-buyer'):
         response=client.get('/api/v1/record/'+plan_id,headers=tokens[role])
