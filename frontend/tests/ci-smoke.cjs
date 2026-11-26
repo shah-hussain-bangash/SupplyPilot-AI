@@ -31,10 +31,13 @@ const path=require('node:path');
     pass('Browser login succeeds for '+name);
   }
   async function logout(){await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Username',{exact:true}).waitFor();}
-  async function nav(name){await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
+  async function nav(name){const menu=page.getByRole('button',{name:'Menu',exact:false});if(await menu.isVisible() && await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
   async function mutate(button){
-    const pending=page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST');
-    await button.click();const response=await pending;
+    await button.scrollIntoViewIfNeeded();
+    const [response]=await Promise.all([
+      page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST'),
+      button.click()
+    ]);
     assert(response.ok(),'Mutation failed: '+response.status()+' '+new URL(response.url()).pathname);
     const saved=await response.json();
     await page.getByRole('status').waitFor();
@@ -57,9 +60,42 @@ const path=require('node:path');
   }
   try{
     await page.goto(base+'/#/portal');
+    assert(await page.getByRole('heading',{name:'Welcome back',exact:true}).isVisible());
+    assert(await page.locator('.signin-story').evaluate(el=>getComputedStyle(el).backgroundImage.includes('signin-warehouse.webp')));
+    assert(await page.getByLabel('Username',{exact:true}).evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>=16));
+    await page.getByLabel('Password',{exact:true}).fill('visibility-test');
+    await button('Show password').click();assert.equal(await page.getByLabel('Password',{exact:true}).getAttribute('type'),'text');
+    await button('Hide password').click();assert.equal(await page.getByLabel('Password',{exact:true}).getAttribute('type'),'password');
+    pass('Redesigned sign-in has readable controls, warehouse imagery and password visibility toggle');
+    await page.screenshot({path:path.join(out,'signin-desktop.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(out,'signin-mobile.png'),fullPage:true});
+    pass('Sign-in fits a 390px mobile viewport without page overflow');
+    await page.setViewportSize({width:1440,height:1000});
     await login('buyer');
+    assert.equal(await page.locator('.portal-stats .portal-stat strong').nth(1).innerText(),'0');
+    assert(await page.getByRole('heading',{name:'No purchase orders yet'}).isVisible());
+    pass('Overview displays actual empty order data without invented demonstration totals');
+    await page.evaluate(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'instant'}));
+    await button('Create RFQ').click();await page.getByRole('heading',{name:'RFQs',exact:true,level:1}).waitFor();await nav('Overview');
+    await page.waitForFunction(()=>window.scrollY===0);
+    pass('Page navigation resets the workspace to its heading');
+    await button('Review documents').click();await page.getByRole('heading',{name:'Documents',exact:true,level:1}).waitFor();await nav('Overview');
+    pass('New overview actions open the existing RFQ and document workflows');
     const screens=['Overview','RFQs','Documents','Compliance','Suppliers','Quotations','Inventory','Sourcing','Approvals','Purchase orders','Receiving','Invoices','Exceptions','Supplier portal','Forecasts','Customer quotes','Feedback','Audit'];
-    for(const screen of screens)await nav(screen);
+    for(const screen of screens){
+      await nav(screen);
+      if(screen!=='Overview'){
+        const image=page.locator('.portal-page-image img');
+        await image.evaluate(img=>img.decode());
+        assert(await image.evaluate(img=>{const banner=img.closest('.portal-page-banner').getBoundingClientRect();const picture=img.getBoundingClientRect();return img.naturalWidth>0 && Math.abs(picture.width-(banner.width-2))<2 && Math.abs(picture.height-(banner.height-2))<2;}));
+        assert((await page.locator('.portal-page-description').innerText()).length>20);
+      }
+      if(['Documents','Compliance','Inventory','Sourcing','Receiving','Invoices'].includes(screen))
+        await page.screenshot({path:path.join(out,screen.toLowerCase()+'-desktop.png'),fullPage:true});
+    }
+    pass('Every inner portal page loads a full-width photograph and readable page introduction');
     pass('All 18 buyer screens load without an alert');
     await nav('Approvals');assert.equal(await button('Approve').count(),0);pass('Buyer cannot approve purchasing');
     await logout();await login('technical');await nav('Compliance');
@@ -97,7 +133,24 @@ const path=require('node:path');
     assert.equal(order.data.status,'closed');assert.equal(order.data.total,'7250.00');
     assert.equal(order.data.lines.reduce((n,x)=>n+x.accepted,0),55);pass('Closed order retains AED 7250 and 55 accepted pieces');
     await page.screenshot({path:path.join(out,'closed-order.png'),fullPage:true});
+    await nav('Overview');
+    assert.deepEqual(await page.locator('.portal-stats .portal-stat strong').allTextContents(),['1','1','1']);
+    assert((await page.locator('.portal-order-card').innerText()).includes('7,250.00'));
+    assert((await page.locator('.portal-fulfillment').innerText()).includes('55 pieces'));
+    await page.waitForFunction(()=>window.scrollY===0);
+    await page.screenshot({path:path.join(out,'overview-desktop.png'),fullPage:true});
+    pass('Overview reflects the real closed simulator order, AED 7250 and 55 accepted pieces');
     await page.setViewportSize({width:390,height:844});await nav('Overview');
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.getByRole('button',{name:'Menu',exact:false}).click();
+    assert.equal(await page.getByRole('button',{name:'Menu',exact:false}).getAttribute('aria-expanded'),'true');
+    await nav('Documents');
+    await page.locator('.portal-page-image img').evaluate(img=>img.decode());
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(out,'documents-mobile.png'),fullPage:true});
+    pass('Inner-page photography and document forms fit the mobile viewport');
+    await nav('Overview');
+    pass('Mobile menu opens and navigates existing screens without page overflow');
     assert(await page.locator('.shell').isVisible());await page.screenshot({path:path.join(out,'mobile-overview.png'),fullPage:true});pass('Workspace remains accessible at a mobile viewport');
     await page.setViewportSize({width:1440,height:1000});await logout();await login('supplier-gulf');
     assert.equal(await page.locator('.shell nav button').count(),2);
