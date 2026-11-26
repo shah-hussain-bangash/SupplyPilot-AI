@@ -33,11 +33,13 @@ const path=require('node:path');
   async function logout(){await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Username',{exact:true}).waitFor();}
   async function nav(name){const menu=page.getByRole('button',{name:'Menu',exact:false});if(await menu.isVisible() && await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
   async function mutate(button){
+    const actionName=await button.innerText();
     await button.scrollIntoViewIfNeeded();
     const [response]=await Promise.all([
       page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST'),
       button.click()
     ]);
+    console.log('ACTION: '+actionName+' -> '+new URL(response.url()).pathname);
     assert(response.ok(),'Mutation failed: '+response.status()+' '+new URL(response.url()).pathname);
     const saved=await response.json();
     await page.getByRole('status').waitFor();
@@ -160,5 +162,10 @@ const path=require('node:path');
     assert.deepEqual(errors,[]);pass('No browser exceptions or server errors occurred');
     fs.writeFileSync(path.join(out,'ui-test-result.json'),JSON.stringify({passed:true,checks_passed:checks.length,checks,roles:['buyer','technical','manager','warehouse','finance','supplier-gulf','auditor'],screen_count:18,database:'temporary SQLite',browser_errors:errors},null,2));
     console.log('BROWSER ACCEPTANCE PASSED: '+checks.length+' checks');
+  }catch(error){
+    console.error('Failure heading:',await page.locator('main h1').allTextContents());
+    console.error('Failure controls:',await page.locator('main button').allTextContents());
+    await page.screenshot({path:path.join(out,'failure-state.png'),fullPage:true});
+    throw error;
   }finally{clearTimeout(guard);await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
