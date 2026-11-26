@@ -1,9 +1,10 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {Row} from './api';
-import {candidateAnchor,currentFieldReview} from './evidence-model';
+import {candidateAnchor,currentFieldReview,citationAnchor} from './evidence-model';
 import './evidence-review.css';
+import type {SearchCitation} from './document-search';
 
-export type EvidenceSnapshot={document:Row; source:{document_id:string;sha256:string;parser:string;pages:string[]}; job:Row|null};
+export type EvidenceSnapshot={document:Row; source:{document_id:string;sha256:string;parser:string;pages:string[]}; job:Row|null;citation?:SearchCitation};
 export type FieldReviewInput={expected_job_revision:number;expected_document_revision:number;source_sha256:string;candidate_index:number;decision:'accepted'|'rejected'|'corrected';corrected_value?:string;reason:string;key:string};
 const label=(value:unknown,fallback='')=>typeof value==='string'?value:fallback;
 const decisionLabel=(value:string)=>({accepted:'Accepted extraction',rejected:'Rejected extraction',corrected:'Corrected extraction'}[value]||'Unreviewed');
@@ -14,7 +15,8 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
   const allCandidates=Array.isArray(result?.candidates)?result.candidates:[];
   const candidates=allCandidates.slice(0,200);
   const anchors=useMemo(()=>allCandidates.slice(0,200).map((candidate:any)=>candidateAnchor(candidate,source.pages,result?.pages)),[result,source]);
-  const [selected,setSelected]=useState(0),[page,setPage]=useState(1);
+  const [selected,setSelected]=useState(snapshot.citation?-1:0),[page,setPage]=useState(snapshot.citation?.page||1);
+  const [citationActive,setCitationActive]=useState(!!snapshot.citation);
   const [decision,setDecision]=useState<FieldReviewInput['decision']>('accepted'),[reason,setReason]=useState(''),[correction,setCorrection]=useState('');
   const [saving,setSaving]=useState(false),[reviewMessage,setReviewMessage]=useState(''),[reviewError,setReviewError]=useState('');
   const requestIdentity=useRef<{signature:string;key:string}|null>(null);
@@ -23,7 +25,9 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
   const current=candidates[selected];
   const anchor=anchors[selected];
   const text=source.pages[page-1]||'';
-  const highlight=anchor?.page===page?anchor:null;
+  const cited=citationActive?citationAnchor(snapshot.citation,document,source):null;
+  const activeAnchor=citationActive?cited:anchor;
+  const highlight=activeAnchor?.page===page?activeAnchor:null;
   const binding={jobId:job?.id||'',jobRevision:job?.revision||0,documentRevision:document.revision,sha256:source.sha256};
   const currentReview=currentFieldReview(reviews,binding,selected,current);
   const history=reviews.filter(review=>review.data.job_id===job?.id);
@@ -38,7 +42,7 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
     catch(error){setReviewError(error instanceof Error?error.message:String(error));}finally{setSaving(false);}
   }
   function choose(index:number){
-    setSelected(index);
+    setCitationActive(false);setSelected(index);
     const candidate=candidates[index];
     if(Number.isInteger(candidate?.page)&&candidate.page>=1&&candidate.page<=source.pages.length)setPage(candidate.page);
   }
@@ -64,7 +68,7 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
         {allCandidates.length>200&&<p>Showing the first 200 candidates. The complete result remains available under processing record details.</p>}
       </section>
       <section className="evidence-source" aria-label="Extracted source text"><div className="evidence-column-heading"><h3>Extracted source text</h3><label>Source page<select aria-label="Source page" value={page} disabled={!source.pages.length} onChange={e=>setPage(Number(e.target.value))}>{source.pages.map((_,index)=><option key={index} value={index+1}>Page {index+1} of {source.pages.length}</option>)}</select></label></div>
-        <p role="status" className="evidence-anchor-status">{highlight?'Showing the exact text reference for '+label(current?.field,'this field')+'.':current?'Source anchor unavailable. Compare this field with the original source.':'Read the extracted source text below.'}</p>
+        <p role="status" className="evidence-anchor-status">{highlight&&citationActive?'Showing the exact cited search passage.':highlight?'Showing the exact text reference for '+label(current?.field,'this field')+'.':current?'Source anchor unavailable. Compare this field with the original source.':'Read the extracted source text below.'}</p>
         <pre className="evidence-source-text" tabIndex={0} aria-label={'Source text page '+page}>{highlight?<>{text.slice(0,highlight.start)}<mark>{text.slice(highlight.start,highlight.end)}</mark>{text.slice(highlight.end)}</>:text||'No extracted text is available for this page.'}</pre>
       </section>
     </div>

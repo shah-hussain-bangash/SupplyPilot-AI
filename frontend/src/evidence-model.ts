@@ -22,3 +22,11 @@ export function candidateAnchor(candidate:any, pages:string[], processedPages:un
   if(end>characters.length||characters.slice(start,end).join('')!==raw)return null;
   return {page,start:characters.slice(0,start).join('').length,end:characters.slice(0,end).join('').length};
 }
+
+
+export function citationAnchor(citation:any,document:any,source:any):Anchor|null {
+  if(!citation||citation.document_id!==document.id||citation.document_revision!==document.revision||
+    citation.sha256!==source.sha256||source.document_id!==document.id||document.data.sha256!==source.sha256||
+    document.data.status!=='review_required'||typeof citation.quote!=='string')return null;
+  return candidateAnchor({...citation,raw:citation.quote},source.pages,source.pages);
+}

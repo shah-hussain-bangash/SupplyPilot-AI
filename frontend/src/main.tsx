@@ -2,6 +2,8 @@ import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {request,setToken,Row,Account} from './api';
 import './style.css';
+import {DocumentSearch,SearchCitation} from './document-search';
+import {citationAnchor} from './evidence-model';
 import {PortalLogin,PortalIcon,PortalNavigation,PortalOverview,PortalPageHeader} from './portal-design';
 import {MarketingSite} from './public-site';
 import './portal-design.css';
@@ -30,16 +32,17 @@ function App(){
  const evidenceEpoch=useRef(0);
  function closeEvidence(){evidenceEpoch.current+=1;setEvidence(null);setFieldReviews([]);setDetail(null);}
  const rows=(kind:string)=>data[kind]||[];
- async function openEvidence(documentId:string,jobId?:string){
+ async function openEvidence(documentId:string,jobId?:string,citation?:SearchCitation){
   const epoch=++evidenceEpoch.current;setEvidence(null);setBusy(true);setError('');setMessage('');
   try{
    const [document,source]=await Promise.all([request('/record/'+documentId),request('/documents/'+documentId+'/evidence')]);
    if(source.document_id!==document.id||source.sha256!==document.data.sha256||!Array.isArray(source.pages)||!source.pages.every((p:unknown)=>typeof p==='string'))throw Error('Source changed or is incomplete. Refresh and reopen the evidence.');
+   if(citation&&!citationAnchor(citation,document,source))throw Error('This citation no longer matches the current source. Search again before using it.');
    const available=user?.role==='supplier'?null:rows('job').find(r=>jobId?r.id===jobId:r.data.document_id===documentId);
    const job=available?await request('/record/'+available.id):null;
    if(job&&job.data.document_id!==documentId)throw Error('Processing result does not belong to this source.');
    const reviews=job?await loadFieldReviews(job.id):[];
-   if(epoch===evidenceEpoch.current){setFieldReviews(reviews);setEvidence({document,source,job});setDetail(source);setMessage('Evidence loaded');}
+   if(epoch===evidenceEpoch.current){setFieldReviews(reviews);setEvidence({document,source,job,citation});setDetail(source);setMessage('Evidence loaded');}
   }catch(e){if(epoch===evidenceEpoch.current)setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
  }
  async function recordFieldReview(input:FieldReviewInput){
@@ -83,7 +86,7 @@ function App(){
  switch(page){
  case 'Overview':content=<PortalOverview data={data} metrics={metrics} onNavigate={setPage} onInspect={setDetail}/>;break;
  case 'RFQs':content=<>{panel('Register a requirement',<div className="form-grid">{input('Project title','title','Industrial materials request')}{input('Required date','due',future(7),'date')}{input('SKU','sku','PIPE-DN50')}{input('Quantity (pieces)','qty','100','number')}{select('Source evidence','document')}{button('Create draft RFQ',()=>post('/rfqs',{title:form.title||'Industrial materials request',due_date:form.due||future(7),lines:[{sku:form.sku||'PIPE-DN50',quantity:Number(form.qty||100),unit:'piece',specs,evidence_id:sourceId}]}),['buyer'])}</div>)}{panel('Review and invite',<div className="form-grid">{select('RFQ','rfq')}{select('Evidence','document')}{input('Review reason','reason','Checked quantity and specifications against source')}{button('Confirm reviewed requirements',()=>post('/rfqs/'+rfq?.id+'/review',{expected_revision:rfq?.revision,lines:rfq?.data.lines.map((l:any)=>({...l,evidence_id:sourceId})),reason:form.reason||'Checked quantity and specifications against source'}),['buyer','technical'])}{select('Supplier to invite','supplier')}{button('Grant supplier portal invitation',()=>post('/rfqs/'+rfq?.id+'/invite',{expected_revision:rfq?.revision,supplier_ids:[pick('supplier')?.id]}),['buyer'])}<small>Invitation grants portal access only. No email is sent. Reviewing or inviting invalidates dependent plans.</small></div>)}{table(rows('rfq'),[['Title',r=>r.data.title],['Revision',r=>r.revision],['State',r=>status(r.data.status)]])}</>;break;
- case 'Documents':content=<>{panel('Upload a source',<div className="form-grid"><label>PDF with text, TXT, CSV or JSON<input type="file" accept=".pdf,.txt,.csv,.json" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>{button('Upload and extract',()=>{if(!file)throw Error('Select a file');const f=new FormData();f.append('file',file);return post('/documents',f);},['buyer','technical','warehouse','finance','supplier'])}<p>Maximum 5 MiB, 60 PDF pages. Scanned PDFs require enabled local OCR; unreadable sources are quarantined. Antivirus scanning and image uploads remain open.</p></div>)}{table(rows('document'),[['Source',r=>r.data.filename],['Status',r=>status(r.data.status)],['Hash',r=><code>{r.data.sha256.slice(0,12)}</code>]],r=><button disabled={busy} onClick={()=>openEvidence(r.id)}>Read evidence</button>)}{panel('Processing results',table(rows('job'),[['Document',r=>r.data.document_id],['State',r=>r.data.state]],r=><button disabled={busy} onClick={()=>openEvidence(r.data.document_id,r.id)}>Review extraction</button>))}</>;break;
+ case 'Documents':content=<>{['buyer','technical','manager','planner','auditor'].includes(user.role)&&<DocumentSearch onOpenCitation={hit=>openEvidence(hit.document_id,undefined,hit)}/>}{panel('Upload a source',<div className="form-grid"><label>PDF with text, TXT, CSV or JSON<input type="file" accept=".pdf,.txt,.csv,.json" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>{button('Upload and extract',()=>{if(!file)throw Error('Select a file');const f=new FormData();f.append('file',file);return post('/documents',f);},['buyer','technical','warehouse','finance','supplier'])}<p>Maximum 5 MiB, 60 PDF pages. Scanned PDFs require enabled local OCR; unreadable sources are quarantined. Antivirus scanning and image uploads remain open.</p></div>)}{table(rows('document'),[['Source',r=>r.data.filename],['Status',r=>status(r.data.status)],['Hash',r=><code>{r.data.sha256.slice(0,12)}</code>]],r=><button disabled={busy} onClick={()=>openEvidence(r.id)}>Read evidence</button>)}{panel('Processing results',table(rows('job'),[['Document',r=>r.data.document_id],['State',r=>r.data.state]],r=><button disabled={busy} onClick={()=>openEvidence(r.data.document_id,r.id)}>Review extraction</button>))}</>;break;
  case 'Compliance':content=<>{panel('Mandatory technical evidence',<p>Review the source before attesting. Missing evidence stays unknown; a mismatched mandatory specification fails. This baseline compares exact normalized text and does not infer engineering equivalence.</p>)}{table(rows('offer'),[['Supplier',r=>r.data.supplier_id],['SKU',r=>r.data.sku],['Technical result',r=>status(r.data.compliance?.status)]],r=><div className="actions">{button('Certificate verified',()=>post('/offers/'+r.id+'/assess',{expected_revision:r.revision,certificate_verified:true,reason:'Technical reviewer verified source certificate'}),['technical'])}{button('Evidence missing',()=>post('/offers/'+r.id+'/assess',{expected_revision:r.revision,certificate_verified:false,reason:'Required certificate evidence remains missing'}),['technical'])}</div>)}</>;break;
  case 'Suppliers':content=table(rows('supplier'),[['Supplier',r=>r.data.name],['Category',r=>r.data.category],['Approved',r=>String(r.data.approved)]]);break;
  case 'Quotations':content=<>{panel('Submit a supplier quotation',offerForm)}{table(rows('offer'),[['Supplier',r=>r.data.supplier_id],['Capacity',r=>r.data.quantity],['Unit price AED',r=>r.data.unit_price],['Delivery',r=>r.data.delivery_date],['Eligibility',r=>status(r.data.compliance?.status)]])}</>;break;

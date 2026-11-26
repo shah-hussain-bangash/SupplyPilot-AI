@@ -201,6 +201,8 @@ def workflow(client, password, check, race=None):
     ocr_workflow(client,check,tokens)
     from postgres_evidence_review_cases import review_workflow
     review_workflow(client,check,tokens,race)
+    from postgres_search_cases import search_workflow
+    search_workflow(client,check,tokens)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
 
@@ -563,6 +565,8 @@ def read_checks(client,password,check,sql,clone):
     job_read_probes(client,check,sql,clone,tokens)
     from postgres_customer_quote_read_cases import quote_read_probes
     quote_read_probes(client,check,sql,clone,tokens)
+    from postgres_search_cases import search_projection_checks
+    search_projection_checks(client,check,sql,clone,tokens)
     return tokens
 
 

@@ -35,4 +35,13 @@ assert.equal(current([event,newer],binding,0,complete).id,'two');checks++;
 assert.equal(current([newer,event],binding,0,complete).id,'two');checks++;
 const reordered=Object.fromEntries(Object.entries(complete).reverse());
 assert.equal(current([event],binding,0,reordered).id,'one');checks++;
+const cite=context.exports.citationAnchor;
+const doc={id:'doc',revision:2,data:{sha256:'hash',status:'review_required'}};
+const source={document_id:'doc',sha256:'hash',pages:['📦 SKU: PIPE-DN50']};
+const citation={document_id:'doc',document_revision:2,sha256:'hash',page:1,start:2,end:16,quote:'SKU: PIPE-DN50'};
+assert.equal(source.pages[0].slice(cite(citation,doc,source).start,cite(citation,doc,source).end),citation.quote);checks++;
+for(const change of [{document_id:'other'},{document_revision:3},{sha256:'changed'},{quote:'Changed text'},{start:3},{end:99},{page:2}]){
+ assert.equal(cite({...citation,...change},doc,source),null);checks++;
+}
+assert.equal(cite(citation,{...doc,data:{...doc.data,status:'quarantined'}},source),null);checks++;
 console.log('EVIDENCE CONTRACT CHECKS PASSED: '+checks);
