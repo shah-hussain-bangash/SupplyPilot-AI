@@ -158,3 +158,11 @@ The frozen corpus under `backend/tests/fixtures/ocr` contains two high-contrast 
 The storage migrations already preserve document/job extension metadata, so this phase adds no migration. Permissioned retrieval, richer evidence review and representative-corpus evaluation remain separate stages.
 
 The engine-only smoke image can be built from the repository root with `docker build -t supplypilot-ocr-smoke -f scripts/ocr-smoke.Dockerfile .`. Mount the repository read-only at `/work` and run the image with `--network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 768m --cpus 2 --pids-limit 128 --tmpfs /tmp:rw,nosuid,noexec,size=192m`. Dependencies are fetched only during image construction; the smoke execution has no network or database access. This container is test infrastructure, not the application's deployment architecture.
+
+## Read-only evidence comparison
+
+On Documents, use **Read evidence** or **Review extraction** to compare candidate fields with the authorized source text. Select a field with a mouse or keyboard to highlight its exact page/text reference. Current evidence and processing details are fetched through existing scoped GET endpoints; no new API, role or approval action is added. Suppliers can read their permitted sources but cannot inspect internal processing candidates. A document without a processing result in the loaded view still displays its permitted text.
+
+Highlights require an exact matching processing/source snapshot and a valid raw text anchor. Missing or mismatched anchors display a warning instead of finding a different occurrence. Python Unicode offsets are converted for browser UTF-16 strings, including emoji before a field. OCR highlights refer to recognized text, not positions in the original scan; original source review remains required. The comparison is read-only and records no review or compliance decision. It shows up to 200 candidates at a time; complete results remain in the existing record inspector.
+
+`node tests/evidence-contract.cjs` from frontend checks anchor validation. The isolated browser suite checks actual upload, source matching, keyboard selection, escaped markup, absence of mutation requests, mobile layout and supplier restrictions. No database migration or installed-portal update is required to review this PR.
