@@ -24,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','job'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','document','job'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -195,6 +195,7 @@ def workflow(client, password, check, race=None):
     check(any(x['action']=='order.closed' and x['resource']==oid for x in events),
           'Auditor can read the new order closure event')
     job_workflow(client,password,check,tokens)
+    document_workflow(client,password,check,tokens)
     exception_workflow(client,password,check,tokens)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
@@ -204,13 +205,13 @@ def workflow(client, password, check, race=None):
 def read_checks(client,password,check,sql,clone):
     from supplypilot.db import Session
     from supplypilot.security import lookup_identity
-    from supplypilot.domain import records,view
+    from supplypilot.domain import records,view,get
     tokens={}
     for role in ('buyer','warehouse','finance','supplier-gulf','supplier-desert','other-buyer','auditor','manager'):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','job'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document','job'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -232,6 +233,17 @@ def read_checks(client,password,check,sql,clone):
                 detail=client.get('/api/v1/record/'+item['id'],headers=tokens[role])
                 check(detail.status_code==200 and detail.json()==item,
                     role+' '+kind+' detail matches '+item['id'])
+                if kind=='document':
+                    with Session() as db:
+                        scoped=lookup_identity(db,role,by_username=True)
+                        source=get(db,scoped,item['id'],'document')
+                        evidence_expected={'document_id':source.id,'sha256':source.data['sha256'],
+                            'pages':source.data.get('pages',[]),'parser':source.data['parser']}
+                    evidence_response=client.get('/api/v1/documents/'+item['id']+'/evidence',headers=tokens[role])
+                    check(evidence_response.status_code==200 and evidence_response.json()==evidence_expected,
+                          role+' document evidence matches exact authoritative parsed pages')
+                    check('pages' not in item['data'],role+' document metadata excludes parsed pages')
+
     response=client.get('/api/v1/record/gulf',headers=tokens['supplier-gulf'])
     check(response.status_code==404,'Supplier cannot read an internal supplier master record')
     response=client.get('/api/v1/records/rfq?limit=201',headers=tokens['buyer'])
@@ -491,6 +503,59 @@ def read_checks(client,password,check,sql,clone):
         sql(clone,"UPDATE proc_exceptions SET resolved_at='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+timed+"'")
 
 
+    document_id=sql(clone,"SELECT d.id FROM proc_documents d WHERE d.tenant='demo' AND NOT EXISTS (SELECT 1 FROM proc_document_jobs j WHERE j.tenant=d.tenant AND j.document_id=d.id) ORDER BY d.id LIMIT 1")
+    saved_header=sql(clone,"SELECT to_jsonb(d)::text FROM proc_documents d WHERE tenant='demo' AND id='"+document_id+"'")
+    saved_pages=sql(clone,"SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY page_index),'[]'::jsonb)::text FROM proc_document_pages p WHERE tenant='demo' AND document_id='"+document_id+"'")
+    def restore_document():
+        sql(clone,"DELETE FROM proc_document_pages WHERE tenant='demo' AND document_id='"+document_id+"'")
+        sql(clone,"DELETE FROM proc_documents WHERE tenant='demo' AND id='"+document_id+"'")
+        sql(clone,"INSERT INTO proc_documents SELECT * FROM jsonb_populate_record(NULL::proc_documents,'"+saved_header.replace("'","''")+"')")
+        sql(clone,"INSERT INTO proc_document_pages SELECT * FROM jsonb_populate_recordset(NULL::proc_document_pages,'"+saved_pages.replace("'","''")+"')")
+    for role in ('supplier-desert','other-buyer'):
+        for path in ('/record/'+document_id,'/documents/'+document_id+'/evidence'):
+            response=client.get('/api/v1'+path,headers=tokens[role])
+            check(response.status_code==404,role+' cannot read demo document through '+path)
+    try:
+        sql(clone,"UPDATE proc_documents SET filename='projection-probe.txt',parser='projection-parser',source_snapshot=source_snapshot || '{\"read_extension\":{\"note\":\"retained\"}}'::jsonb WHERE tenant='demo' AND id='"+document_id+"'")
+        for path in ('/record/'+document_id,'/records/document'):
+            response=client.get('/api/v1'+path,headers=tokens['buyer'])
+            check(response.status_code==200,'Document relational metadata probe succeeds for '+path)
+            item=response.json() if path.startswith('/record/') else next(x for x in response.json()['items'] if x['id']==document_id)
+            check(item['data']['filename']=='projection-probe.txt' and item['data']['read_extension']=={'note':'retained'} and 'pages' not in item['data'],
+                  'Document metadata consumes projected fields and excludes pages for '+path)
+        evidence=client.get('/api/v1/documents/'+document_id+'/evidence',headers=tokens['buyer'])
+        check(evidence.status_code==200 and evidence.json()['parser']=='projection-parser','Evidence reads normalized parser metadata')
+    finally:restore_document()
+    try:
+        pages=['Projected first page — اختبار','','Projected first page — اختبار']
+        sql(clone,"UPDATE proc_documents SET page_count=3 WHERE tenant='demo' AND id='"+document_id+"'")
+        sql(clone,"DELETE FROM proc_document_pages WHERE tenant='demo' AND document_id='"+document_id+"'")
+        for index in (2,0,1):
+            sql(clone,"INSERT INTO proc_document_pages VALUES('demo','"+document_id+"',"+str(index)+",'"+pages[index].replace("'","''")+"')")
+        evidence=client.get('/api/v1/documents/'+document_id+'/evidence',headers=tokens['buyer'])
+        check(evidence.status_code==200 and evidence.json()['pages']==pages,'Evidence consumes normalized pages in page-index order with Unicode, blanks and duplicates')
+    finally:restore_document()
+    paths=('/record/'+document_id,'/records/document','/documents/'+document_id+'/evidence')
+    for corruption in ('stale header','missing page','extra page','missing header'):
+        try:
+            if corruption=='stale header':sql(clone,"UPDATE proc_documents SET source_revision=source_revision+1 WHERE tenant='demo' AND id='"+document_id+"'")
+            elif corruption=='extra page':sql(clone,"INSERT INTO proc_document_pages VALUES('demo','"+document_id+"',59,'unexpected page')")
+            else:
+                sql(clone,"DELETE FROM proc_document_pages WHERE tenant='demo' AND document_id='"+document_id+"'")
+                if corruption=='missing header':sql(clone,"DELETE FROM proc_documents WHERE tenant='demo' AND id='"+document_id+"'")
+            for path in paths:
+                response=client.get('/api/v1'+path,headers=tokens['buyer'])
+                check(response.status_code==503 and response.json()['detail']['code']=='projection_not_ready',corruption+' fails closed for '+path)
+        finally:restore_document()
+    try:
+        sql(clone,"UPDATE proc_documents SET supplier_id='desert' WHERE tenant='demo' AND id='"+document_id+"'")
+        for role in ('supplier-gulf','supplier-desert'):
+            for path in ('/record/'+document_id,'/documents/'+document_id+'/evidence'):
+                response=client.get('/api/v1'+path,headers=tokens[role])
+                check(response.status_code==404,'Source/projection ownership disagreement denies '+role+' through '+path)
+    finally:restore_document()
+
+
     job_read_probes(client,check,sql,clone,tokens)
 
 
@@ -535,6 +600,54 @@ def exception_workflow(client,password,check,tokens):
     resolution['expected_revision']=reopened['revision']
     again=request('POST','/exceptions/'+case['id']+'/resolve',body=resolution)
     parity(again,'Re-resolved exception remains consistent across mutation, detail and collection reads')
+
+
+def document_workflow(client,password,check,tokens):
+    import hashlib
+    marker='DOCREAD'+uuid4().hex[:10]
+    text='SYNTHETIC DOCUMENT READ TEST ONLY\n'+marker+'\nUnicode — اختبار\nPIPE-DN50\n'
+    raw=text.encode('utf-8')
+    def request(method,path,role='buyer',status=200,**kwargs):
+        response=client.request(method,'/api/v1'+path,headers=tokens[role],**kwargs)
+        if response.status_code!=status:
+            raise AssertionError(f'{method} {path}: expected {status}, got {response.status_code}: {response.text[:400]}')
+        return response
+    docs={}
+    for role in ('buyer','supplier-gulf','supplier-desert'):
+        result=request('POST','/documents',role,201,files={'file':('document-read-demo.txt',raw,'text/plain')}).json()
+        docs[role]=result
+        detail=request('GET','/record/'+result['id'],role).json()
+        page=request('GET','/records/document',role).json()
+        check(detail==result==next(x for x in page['items'] if x['id']==result['id']),role+' new document metadata matches creation, collection and detail')
+        check('pages' not in detail['data'] and 'pages' not in next(x for x in page['items'] if x['id']==result['id'])['data'],role+' document metadata does not expose parsed page text')
+        evidence=request('GET','/documents/'+result['id']+'/evidence',role).json()
+        check(evidence=={'document_id':result['id'],'sha256':hashlib.sha256(raw).hexdigest(),'pages':[text],'parser':'pypdf/text-v1'},role+' evidence preserves exact Unicode text, source hash and parser')
+        downloaded=request('GET','/documents/'+result['id']+'/download',role)
+        check(downloaded.content==raw,role+' source download bytes remain unchanged')
+    for owner in ('buyer','supplier-desert'):
+        for path in ('/record/','/documents/'):
+            suffix='' if path=='/record/' else '/evidence'
+            request('GET',path+docs[owner]['id']+suffix,'supplier-gulf',404)
+        request('GET','/documents/'+docs[owner]['id']+'/download','supplier-gulf',404)
+    check(True,'Gulf supplier cannot read another supplier or internal document metadata, evidence or file')
+    for suffix in ('','/evidence','/download'):
+        path='/record/' if not suffix else '/documents/'
+        request('GET',path+docs['buyer']['id']+suffix,'other-buyer',404)
+    check(True,'Other tenant cannot read newly uploaded document metadata, evidence or file')
+    own=request('GET','/records/document','supplier-gulf').json()['items']
+    check(all(x['data'].get('supplier_id')=='gulf' for x in own),'Supplier document collection excludes competitors and internal sources')
+    for filename,content,expected_pages in (('invalid.pdf',b'NOT A PDF',[]),('blank.txt',b' \t\n',[' \t\n'])):
+        quarantined=request('POST','/documents',status=201,files={'file':(filename,content,'application/octet-stream')}).json()
+        detail=request('GET','/record/'+quarantined['id']).json()
+        check(detail==quarantined and detail['data']['status']=='quarantined','Quarantined '+filename+' metadata retains its state and error')
+        evidence=request('GET','/documents/'+quarantined['id']+'/evidence').json()
+        check(evidence['pages']==expected_pages,'Quarantined '+filename+' evidence retains the existing partial-text contract')
+        request('GET','/documents/'+quarantined['id']+'/download',status=403)
+        check(True,'Quarantined '+filename+' cannot be downloaded')
+    search=request('POST','/search',json={'query':marker}).json()
+    check(any(hit['document_id']==docs['buyer']['id'] for hit in search['hits']),'Internal search still finds the new parsed source without changing its write path')
+    request('POST','/search','supplier-gulf',403,json={'query':marker})
+    check(True,'Supplier search access remains restricted')
 
 
 def job_read_probes(client,check,sql,clone,tokens):
