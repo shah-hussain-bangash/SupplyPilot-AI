@@ -1,0 +1,27 @@
+{
+  "scope": "English high-contrast printed synthetic fixtures only; not a production accuracy benchmark",
+  "cases": [
+    {
+      "file": "clean-scan.pdf",
+      "sha256": "7bc81a89e67f56d246009ef0f8f556036cabfa6f7580c5649d9343d0bb5df28e",
+      "pages": 1,
+      "fields": {
+        "sku": "PIPE-DN50",
+        "quantity": "30",
+        "grade": "ASTM A106 Grade B"
+      },
+      "synthetic": true
+    },
+    {
+      "file": "instruction-scan.pdf",
+      "sha256": "5631f16655c3ab2f5f99c93c9f78981ad3beb7d86733ba880215edc414acb129",
+      "pages": 1,
+      "fields": {
+        "sku": "PIPE-DN50",
+        "quantity": "30",
+        "grade": "ASTM A106 Grade B"
+      },
+      "synthetic": true
+    }
+  ]
+}

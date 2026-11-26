@@ -139,8 +139,22 @@ docs/reference/        Architecture, requirements and earlier milestone notes
 
 ## Remaining work
 
-Live ERP, email dispatch, payments, freight/tax accounting, production identity provisioning, OCR, semantic RAG, trained forecasting, governed model releases and cloud operational acceptance remain further work. A private model gateway contract exists, but no active LLM provider, embedding model or vector retrieval deployment is claimed.
+Live ERP, email dispatch, payments, freight/tax accounting, production identity provisioning, production OCR validation, semantic RAG, trained forecasting, governed model releases and cloud operational acceptance remain further work. A private model gateway contract exists, but no active LLM provider, embedding model or vector retrieval deployment is claimed.
 
 Tenant RLS relies on trusted application-set context and does not protect against compromise of the shared runtime credential. Supplier restrictions also rely on application authorization. Audit events are protected from runtime update/delete, but external tamper-resistant storage is not implemented.
 
 Local databases, document uploads, backups, credentials, dependencies and compiled frontend output are excluded from source control.
+
+## Optional local scanned-PDF OCR
+
+This foundation is disabled by default. With `APP_MODE=local`, install Tesseract with English language data and Poppler (`pdftoppm`) on PATH, then set `SUPPLYPILOT_LOCAL_OCR=true` before starting a separate test portal. No cloud OCR, model call or document egress is added. On Ubuntu CI the tool packages are `tesseract-ocr`, `tesseract-ocr-eng` and `poppler-utils`; see the [Tesseract installation documentation](https://tesseract-ocr.github.io/tessdoc/Installation.html).
+
+Embedded PDF text keeps its existing parser path. The optional fallback handles empty text layers only, up to five OCR pages within the existing 60-page/5 MiB upload limits, a shared 30-second tool deadline and a 2,400-pixel raster edge. It is not a complete mixed-layout detector: a partial but nonempty text layer is not OCR'd. Blank/unreadable pages, missing tools, timeouts and over-limit output quarantine the document and create no completed extraction job. Do not enable this experimental synchronous path on a production service; native parsers are not a malware sandbox, and operational concurrency/CPU quotas remain future work.
+
+Successful OCR is `review_required`, `malware_scanned=false`, with `pypdf/tesseract-v1` provenance, OCR page numbers and unreviewed source-text offsets. It never approves specifications, changes offers, closes exceptions, queues orders or sends messages. Existing tenant and supplier checks remain in force. Bounding boxes, table reconstruction, handwriting, multilingual quality and antivirus scanning are not implemented.
+
+The frozen corpus under `backend/tests/fixtures/ocr` contains two high-contrast English printed synthetic scans (including adversarial instruction text) and one blank negative. Labels and file hashes are stored in `labels.json`. These smoke fixtures do not measure production extraction accuracy. Backend CI requires real engine tests; local runs skip those three tests if the tools are missing. To require them: `REQUIRE_LOCAL_OCR=true python -m pytest tests/test_local_ocr.py` from backend. `python scripts/ocr_engine_smoke.py` exercises the actual tools without any database; run it in a network-disabled disposable container when possible.
+
+The storage migrations already preserve document/job extension metadata, so this phase adds no migration. Permissioned retrieval, richer evidence review and representative-corpus evaluation remain separate stages.
+
+The engine-only smoke image can be built from the repository root with `docker build -t supplypilot-ocr-smoke -f scripts/ocr-smoke.Dockerfile .`. Mount the repository read-only at `/work` and run the image with `--network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 768m --cpus 2 --pids-limit 128 --tmpfs /tmp:rw,nosuid,noexec,size=192m`. Dependencies are fetched only during image construction; the smoke execution has no network or database access. This container is test infrastructure, not the application's deployment architecture.

@@ -19,3 +19,8 @@ if MODE != 'local':
     if DATABASE_URL.startswith('sqlite'):
         raise RuntimeError('Non-local mode requires PostgreSQL.')
 MAX_UPLOAD = 5 * 1024 * 1024
+
+# Local OCR is opt-in; no external model or service is used.
+LOCAL_OCR_ENABLED = os.getenv('SUPPLYPILOT_LOCAL_OCR', 'false').lower() == 'true'
+if LOCAL_OCR_ENABLED and MODE != 'local':
+    raise RuntimeError('Local OCR is available only in the isolated local mode.')
