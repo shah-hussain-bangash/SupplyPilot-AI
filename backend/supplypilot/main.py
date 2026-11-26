@@ -22,10 +22,10 @@ from . import config, schemas as S, procurement as P
 from .db import Session, User, Record, Audit, Outbox, get_db, now
 from .security import actor, allow, password_ok, token_for, profile, lookup_identity
 from .domain import create, get, records, save, view, fail, evidence, audit
-from .intelligence import extraction_graph, search_pages, backtest
+from .intelligence import extraction_graph, backtest
 from .integrations import intent_view, get_intent, process
 from .planning import money
-from . import relational_reads, evidence_reviews
+from . import relational_reads, evidence_reviews, document_search
 
 # Finish the shared request transaction before acknowledging the response.
 # Authentication and endpoints use the same function-scoped cached dependency.
@@ -234,9 +234,7 @@ def download(rid:str,user=Depends(actor),db=Depends(get_db,scope='function')):
 
 @app.post('/api/v1/search')
 def search(body:S.Search,user=Depends(actor),db=Depends(get_db,scope='function')):
-    allow(user,'buyer','technical','manager','planner','auditor')
-    hits=search_pages([d for d in records(db,user,'document') if d.data['status']=='review_required'],body.query)
-    return {'method':'lexical-baseline','answer':None,'abstained':not bool(hits),'hits':hits,'note':'Quoted evidence only. Semantic embeddings, reranking and generated answers are not enabled.'}
+    return document_search.search(db,user,body.query)
 
 @app.post('/api/v1/exceptions',status_code=201)
 def issue(body:S.ExceptionCreate,user=Depends(actor),db=Depends(get_db,scope='function')):

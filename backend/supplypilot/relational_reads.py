@@ -288,3 +288,19 @@ def document_evidence(db,user,rid):
     row=db.execute(text(_query('document',user,True,include_pages=True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
     return _document_evidence_view(row,user)
+
+
+def search_documents(db,user,limit):
+    """One scoped snapshot includes verified document metadata and ordered pages."""
+    if not _ready(db,'document'):return None
+    from types import SimpleNamespace
+    params={'tenant':user.tenant,'kind':'document','supplier_id':user.supplier_id,'limit':limit}
+    rows=db.execute(text(_query('document',user,include_pages=True)+' ORDER BY r.id LIMIT :limit').execution_options(yield_per=1),params).mappings()
+    def documents():
+        try:
+            for row in rows:
+                item=_view(row,user)
+                item['data']['pages']=deepcopy(row['pages'])
+                yield SimpleNamespace(id=item['id'],revision=item['revision'],data=item['data'])
+        finally:rows.close()
+    return documents()

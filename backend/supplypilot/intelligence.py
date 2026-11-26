@@ -33,18 +33,6 @@ def eligibility(requirement, offered, certificate_verified):
     result = 'noncompliant' if 'noncompliant' in checks.values() else ('unknown' if 'unknown' in checks.values() else 'compliant')
     return {'status': result, 'checks': checks, 'rule_version': 'exact-spec-v1'}
 
-def search_pages(documents, query):
-    terms=set(re.findall(r'\w+', query.lower()))
-    hits=[]
-    for doc in documents:
-        for page, text in enumerate(doc.data.get('pages', []), 1):
-            score=sum(1 for t in terms if t in set(re.findall(r'\w+', text.lower())))
-            if score:
-                pos=min((text.lower().find(t) for t in terms if t in text.lower()), default=0)
-                start=max(0,pos-100)
-                hits.append({'document_id':doc.id,'sha256':doc.data['sha256'],'page':page,'score':score,'quote':text[start:start+650], 'start':start})
-    return sorted(hits,key=lambda h:h['score'],reverse=True)[:8]
-
 def backtest(values):
     # Every rolling prediction uses strictly earlier observations.
     rows=[]
