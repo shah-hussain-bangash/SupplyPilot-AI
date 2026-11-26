@@ -33,8 +33,11 @@ const path=require('node:path');
   async function logout(){await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Username',{exact:true}).waitFor();}
   async function nav(name){const menu=page.getByRole('button',{name:'Menu',exact:false});if(await menu.isVisible() && await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
   async function mutate(button){
-    const pending=page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST');
-    await button.click();const response=await pending;
+    await button.scrollIntoViewIfNeeded();
+    const [response]=await Promise.all([
+      page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST'),
+      button.click()
+    ]);
     assert(response.ok(),'Mutation failed: '+response.status()+' '+new URL(response.url()).pathname);
     const saved=await response.json();
     await page.getByRole('status').waitFor();
