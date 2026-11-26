@@ -31,7 +31,7 @@ const path=require('node:path');
     pass('Browser login succeeds for '+name);
   }
   async function logout(){await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Username',{exact:true}).waitFor();}
-  async function nav(name){await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
+  async function nav(name){const menu=page.getByRole('button',{name:'Menu',exact:false});if(await menu.isVisible() && await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.locator('.shell nav button').filter({hasText:name}).click();await page.getByRole('heading',{name,exact:true,level:1}).waitFor();await ready();}
   async function mutate(button){
     const pending=page.waitForResponse(r=>r.url().startsWith(base+'/api/v1/') && r.request().method()==='POST');
     await button.click();const response=await pending;
@@ -57,7 +57,26 @@ const path=require('node:path');
   }
   try{
     await page.goto(base+'/#/portal');
+    assert(await page.getByRole('heading',{name:'Welcome back',exact:true}).isVisible());
+    assert(await page.locator('.signin-story').evaluate(el=>getComputedStyle(el).backgroundImage.includes('signin-warehouse.webp')));
+    assert(await page.getByLabel('Username',{exact:true}).evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>=16));
+    await page.getByLabel('Password',{exact:true}).fill('visibility-test');
+    await button('Show password').click();assert.equal(await page.getByLabel('Password',{exact:true}).getAttribute('type'),'text');
+    await button('Hide password').click();assert.equal(await page.getByLabel('Password',{exact:true}).getAttribute('type'),'password');
+    pass('Redesigned sign-in has readable controls, warehouse imagery and password visibility toggle');
+    await page.screenshot({path:path.join(out,'signin-desktop.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(out,'signin-mobile.png'),fullPage:true});
+    pass('Sign-in fits a 390px mobile viewport without page overflow');
+    await page.setViewportSize({width:1440,height:1000});
     await login('buyer');
+    assert.equal(await page.locator('.portal-stats .portal-stat strong').nth(1).innerText(),'0');
+    assert(await page.getByRole('heading',{name:'No purchase orders yet'}).isVisible());
+    pass('Overview displays actual empty order data without invented demonstration totals');
+    await button('Create RFQ').click();await page.getByRole('heading',{name:'RFQs',exact:true,level:1}).waitFor();await nav('Overview');
+    await button('Review documents').click();await page.getByRole('heading',{name:'Documents',exact:true,level:1}).waitFor();await nav('Overview');
+    pass('New overview actions open the existing RFQ and document workflows');
     const screens=['Overview','RFQs','Documents','Compliance','Suppliers','Quotations','Inventory','Sourcing','Approvals','Purchase orders','Receiving','Invoices','Exceptions','Supplier portal','Forecasts','Customer quotes','Feedback','Audit'];
     for(const screen of screens)await nav(screen);
     pass('All 18 buyer screens load without an alert');
@@ -97,7 +116,18 @@ const path=require('node:path');
     assert.equal(order.data.status,'closed');assert.equal(order.data.total,'7250.00');
     assert.equal(order.data.lines.reduce((n,x)=>n+x.accepted,0),55);pass('Closed order retains AED 7250 and 55 accepted pieces');
     await page.screenshot({path:path.join(out,'closed-order.png'),fullPage:true});
+    await nav('Overview');
+    assert.deepEqual(await page.locator('.portal-stats .portal-stat strong').allTextContents(),['1','1','1']);
+    assert((await page.locator('.portal-order-card').innerText()).includes('7,250.00'));
+    assert((await page.locator('.portal-fulfillment').innerText()).includes('55 pieces'));
+    await page.screenshot({path:path.join(out,'overview-desktop.png'),fullPage:true});
+    pass('Overview reflects the real closed simulator order, AED 7250 and 55 accepted pieces');
     await page.setViewportSize({width:390,height:844});await nav('Overview');
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.getByRole('button',{name:'Menu',exact:false}).click();
+    assert.equal(await page.getByRole('button',{name:'Menu',exact:false}).getAttribute('aria-expanded'),'true');
+    await nav('Documents');await nav('Overview');
+    pass('Mobile menu opens and navigates existing screens without page overflow');
     assert(await page.locator('.shell').isVisible());await page.screenshot({path:path.join(out,'mobile-overview.png'),fullPage:true});pass('Workspace remains accessible at a mobile viewport');
     await page.setViewportSize({width:1440,height:1000});await logout();await login('supplier-gulf');
     assert.equal(await page.locator('.shell nav button').count(),2);
