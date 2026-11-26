@@ -20,3 +20,9 @@ Banner prompt: modern clean industrial loading bays, orderly steel pipe racks on
 Sign-in prompt: portrait industrial warehouse interior, stainless steel pipes on the left, tidy material racks, sunlight through a loading bay on the lower right, dark navy upper half for CSS headings, warm floor reflections. No interface, text, logos, icons, people or watermark.
 
 The new UI branch is based on the existing customer-quote storage branch so its tested procurement baseline is preserved. Its CI trigger permits that stacked target. No merge, database migration or deployment is part of the UI change.
+
+## Inner-page visual refinement
+
+All seventeen inner portal pages now have a contextual photographic introduction, clear workflow category and short task description. The overview also has photographic quick-action thumbnails. Images reuse the repository's existing local WebP illustration library, avoiding new image downloads or external services. Header illustrations are decorative, explicitly labeled, and do not represent supplier evidence or completed business checks. Forms and tables stay on plain surfaces. Mobile places the image above its introduction and retains full navigation.
+
+Browser acceptance decodes every page illustration, checks all eighteen page headings, captures representative inner-page screenshots and verifies the mobile Documents layout, alongside the original procurement workflow.

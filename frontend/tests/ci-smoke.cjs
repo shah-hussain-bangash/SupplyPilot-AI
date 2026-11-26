@@ -78,7 +78,18 @@ const path=require('node:path');
     await button('Review documents').click();await page.getByRole('heading',{name:'Documents',exact:true,level:1}).waitFor();await nav('Overview');
     pass('New overview actions open the existing RFQ and document workflows');
     const screens=['Overview','RFQs','Documents','Compliance','Suppliers','Quotations','Inventory','Sourcing','Approvals','Purchase orders','Receiving','Invoices','Exceptions','Supplier portal','Forecasts','Customer quotes','Feedback','Audit'];
-    for(const screen of screens)await nav(screen);
+    for(const screen of screens){
+      await nav(screen);
+      if(screen!=='Overview'){
+        const image=page.locator('.portal-page-image img');
+        await image.evaluate(img=>img.decode());
+        assert(await image.evaluate(img=>img.naturalWidth>0 && img.getBoundingClientRect().width>0));
+        assert((await page.locator('.portal-page-description').innerText()).length>20);
+      }
+      if(['Documents','Inventory','Sourcing','Receiving','Invoices'].includes(screen))
+        await page.screenshot({path:path.join(out,screen.toLowerCase()+'-desktop.png'),fullPage:true});
+    }
+    pass('Every inner portal page loads its illustration and useful page introduction');
     pass('All 18 buyer screens load without an alert');
     await nav('Approvals');assert.equal(await button('Approve').count(),0);pass('Buyer cannot approve purchasing');
     await logout();await login('technical');await nav('Compliance');
@@ -126,7 +137,12 @@ const path=require('node:path');
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.getByRole('button',{name:'Menu',exact:false}).click();
     assert.equal(await page.getByRole('button',{name:'Menu',exact:false}).getAttribute('aria-expanded'),'true');
-    await nav('Documents');await nav('Overview');
+    await nav('Documents');
+    await page.locator('.portal-page-image img').evaluate(img=>img.decode());
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(out,'documents-mobile.png'),fullPage:true});
+    pass('Inner-page photography and document forms fit the mobile viewport');
+    await nav('Overview');
     pass('Mobile menu opens and navigates existing screens without page overflow');
     assert(await page.locator('.shell').isVisible());await page.screenshot({path:path.join(out,'mobile-overview.png'),fullPage:true});pass('Workspace remains accessible at a mobile viewport');
     await page.setViewportSize({width:1440,height:1000});await logout();await login('supplier-gulf');
