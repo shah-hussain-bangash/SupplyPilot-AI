@@ -18,6 +18,7 @@ function App(){
  const [user,setUser]=useState<Account|null>(null),[username,setUsername]=useState('buyer'),[password,setPassword]=useState(''),[oidc,setOidc]=useState('');
  const [page,setPage]=useState('Overview'),[data,setData]=useState<Record<string,Row[]>>({}),[intents,setIntents]=useState<any[]>([]),[metrics,setMetrics]=useState<any>(null),[events,setEvents]=useState<any[]>([]);
  const [form,setForm]=useState<Record<string,string>>({}),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[detail,setDetail]=useState<unknown>(null),[file,setFile]=useState<File|null>(null);
+ useEffect(()=>{if(surface==='portal')window.scrollTo({top:0,behavior:'instant'})},[page,surface]);
  const rows=(kind:string)=>data[kind]||[];
  const pick=(kind:string,key=kind)=>rows(kind).find(r=>r.id===form[key])||rows(kind)[0];
  const field=(key:string,value:string)=>setForm(f=>({...f,[key]:value}));
