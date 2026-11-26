@@ -5,7 +5,7 @@ import './style.css';
 import {PortalLogin,PortalIcon,PortalNavigation,PortalOverview,PortalPageHeader} from './portal-design';
 import {MarketingSite} from './public-site';
 import './portal-design.css';
-import {EvidenceReview,EvidenceSnapshot} from './evidence-review';
+import {EvidenceReview,EvidenceSnapshot,FieldReviewInput} from './evidence-review';
 
 const screens=['Overview','RFQs','Documents','Compliance','Suppliers','Quotations','Inventory','Sourcing','Approvals','Purchase orders','Receiving','Invoices','Exceptions','Supplier portal','Forecasts','Customer quotes','Feedback','Audit'];
 const kinds=['rfq','document','job','offer','supplier','stock','plan','order','receipt','invoice','exception','evaluation','customer_quote','feedback'];
@@ -21,8 +21,14 @@ function App(){
  const [form,setForm]=useState<Record<string,string>>({}),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[detail,setDetail]=useState<unknown>(null),[file,setFile]=useState<File|null>(null);
  useEffect(()=>{if(surface==='portal')window.scrollTo({top:0,behavior:'instant'})},[page,surface]);
  const [evidence,setEvidence]=useState<EvidenceSnapshot|null>(null);
+ const [fieldReviews,setFieldReviews]=useState<Row[]>([]);
+ async function loadFieldReviews(jobId:string){
+  const all:Row[]=[];let offset=0,total=0;
+  do{const page=await request('/jobs/'+jobId+'/field-reviews?offset='+offset+'&limit=200');all.push(...page.items);total=page.total;offset+=page.items.length;if(!page.items.length)break;}while(offset<total);
+  return all;
+ }
  const evidenceEpoch=useRef(0);
- function closeEvidence(){evidenceEpoch.current+=1;setEvidence(null);setDetail(null);}
+ function closeEvidence(){evidenceEpoch.current+=1;setEvidence(null);setFieldReviews([]);setDetail(null);}
  const rows=(kind:string)=>data[kind]||[];
  async function openEvidence(documentId:string,jobId?:string){
   const epoch=++evidenceEpoch.current;setEvidence(null);setBusy(true);setError('');setMessage('');
@@ -32,8 +38,16 @@ function App(){
    const available=user?.role==='supplier'?null:rows('job').find(r=>jobId?r.id===jobId:r.data.document_id===documentId);
    const job=available?await request('/record/'+available.id):null;
    if(job&&job.data.document_id!==documentId)throw Error('Processing result does not belong to this source.');
-   if(epoch===evidenceEpoch.current){setEvidence({document,source,job});setDetail(source);setMessage('Evidence loaded');}
+   const reviews=job?await loadFieldReviews(job.id):[];
+   if(epoch===evidenceEpoch.current){setFieldReviews(reviews);setEvidence({document,source,job});setDetail(source);setMessage('Evidence loaded');}
   }catch(e){if(epoch===evidenceEpoch.current)setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
+ }
+ async function recordFieldReview(input:FieldReviewInput){
+  if(!evidence?.job)throw Error('Open an extraction result before recording a field review.');
+  const epoch=evidenceEpoch.current,jobId=evidence.job.id;
+  const saved=await request('/jobs/'+jobId+'/field-reviews',input);
+  if(epoch===evidenceEpoch.current){setFieldReviews(previous=>[saved,...previous.filter(row=>row.id!==saved.id)]);setDetail(saved);}
+  return saved;
  }
  const pick=(kind:string,key=kind)=>rows(kind).find(r=>r.id===form[key])||rows(kind)[0];
  const field=(key:string,value:string)=>setForm(f=>({...f,[key]:value}));
@@ -87,7 +101,7 @@ function App(){
  default:content=panel('Scoped audit trail',<><p>Manager and auditor accounts can read this tenant's server-recorded events. External tamper-resistant storage and export governance remain required.</p><div className="table-wrap"><table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Resource</th></tr></thead><tbody>{events.map(e=><tr key={e.id}><td>{new Date(e.at).toLocaleString()}</td><td>{e.actor}</td><td>{e.action}</td><td>{e.resource.slice(0,16)}</td></tr>)}</tbody></table></div></>);
  }
  const nav=user.role==='supplier'?['Supplier portal','Documents']:screens;
- return <div className="shell"><a className="portal-skip" href="#portal-content">Skip to workspace content</a><PortalNavigation screens={nav} page={page} onNavigate={s=>{closeEvidence();setPage(s);setDetail(null);setError('');setMessage('');}}/><div className="workspace"><header><div><b>Industrial materials</b><span> / {user.tenant}</span></div><div className="account"><span className="avatar">{user.username.slice(0,1).toUpperCase()}</span><span>{user.username}<small>{user.role}</small></span><button className="quiet" onClick={openWebsite}>Website</button><button className="quiet" onClick={logout}>Sign out</button></div></header><main id="portal-content"><PortalPageHeader page={page} busy={busy} canCreate={user.role==='buyer'} onCreate={()=>{setPage('RFQs');setDetail(null)}} onRefresh={()=>run(()=>refresh(),'Workspace refreshed')}/><div className="notice"><PortalIcon name="warning"/><span>Local simulation · No live ERP, email or payments. Seed records are synthetic.</span></div>{error&&<div role="alert" className="error">{error}</div>}{message&&<div role="status" className="success">{message}</div>}{content}{page==='Documents'&&evidence&&<EvidenceReview key={evidence.document.id+':'+(evidence.job?.id||'source')} snapshot={evidence} onClose={closeEvidence}/>} {detail!==null&&<section className="panel detail"><div className="heading-row"><h2>Record & evidence details</h2><button className="quiet" onClick={()=>setDetail(null)}>Close</button></div>{evidence?<details><summary>Technical record details</summary><pre>{JSON.stringify(detail,null,2)}</pre></details>:<pre>{JSON.stringify(detail,null,2)}</pre>}</section>}</main><footer>SupplyPilot AI · Source-backed decisions, authorized actions, traceable outcomes.</footer></div></div>;
+ return <div className="shell"><a className="portal-skip" href="#portal-content">Skip to workspace content</a><PortalNavigation screens={nav} page={page} onNavigate={s=>{closeEvidence();setPage(s);setDetail(null);setError('');setMessage('');}}/><div className="workspace"><header><div><b>Industrial materials</b><span> / {user.tenant}</span></div><div className="account"><span className="avatar">{user.username.slice(0,1).toUpperCase()}</span><span>{user.username}<small>{user.role}</small></span><button className="quiet" onClick={openWebsite}>Website</button><button className="quiet" onClick={logout}>Sign out</button></div></header><main id="portal-content"><PortalPageHeader page={page} busy={busy} canCreate={user.role==='buyer'} onCreate={()=>{setPage('RFQs');setDetail(null)}} onRefresh={()=>run(()=>refresh(),'Workspace refreshed')}/><div className="notice"><PortalIcon name="warning"/><span>Local simulation · No live ERP, email or payments. Seed records are synthetic.</span></div>{error&&<div role="alert" className="error">{error}</div>}{message&&<div role="status" className="success">{message}</div>}{content}{page==='Documents'&&evidence&&<EvidenceReview key={evidence.document.id+':'+(evidence.job?.id||'source')} snapshot={evidence} reviews={fieldReviews} canReview={user.role==='technical'} onRecordReview={recordFieldReview} onClose={closeEvidence}/>} {detail!==null&&<section className="panel detail"><div className="heading-row"><h2>Record & evidence details</h2><button className="quiet" onClick={()=>setDetail(null)}>Close</button></div>{evidence?<details><summary>Technical record details</summary><pre>{JSON.stringify(detail,null,2)}</pre></details>:<pre>{JSON.stringify(detail,null,2)}</pre>}</section>}</main><footer>SupplyPilot AI · Source-backed decisions, authorized actions, traceable outcomes.</footer></div></div>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
 

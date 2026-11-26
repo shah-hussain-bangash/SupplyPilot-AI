@@ -24,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','document','job','customer_quote'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','document','job','customer_quote','evidence_review'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -199,6 +199,8 @@ def workflow(client, password, check, race=None):
     exception_workflow(client,password,check,tokens)
     from postgres_ocr_cases import ocr_workflow
     ocr_workflow(client,check,tokens)
+    from postgres_evidence_review_cases import review_workflow
+    review_workflow(client,check,tokens,race)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
 
