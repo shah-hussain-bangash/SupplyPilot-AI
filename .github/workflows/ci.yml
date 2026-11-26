@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage]
+    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage, release/phase-1-validation]
   workflow_dispatch:
 
 permissions:
