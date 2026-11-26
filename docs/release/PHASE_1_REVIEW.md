@@ -20,7 +20,7 @@ All six source PRs were open, unmerged and individually green when this candidat
 - Start from PR #22's head, which already includes the #19 → #20 → #21 → #22 dependency chain.
 - Add PR #17's case-study reproduction notes and scoped evidence. Its browser revision-wait correction is already retained in the later browser helper; do not overwrite the expanded UI checks with an older helper.
 - Compose PR #18's document metadata/evidence reads with #20's job reads. The resulting adapter exactly matches the installed, clone-tested document/job adapter. The evidence endpoint matches the installed document-read endpoint. Preserve the document-specific regression tests.
-- Combine the document acceptance checks with job acceptance checks, retain the quote-aware plan-corruption probe, and choose document probes with no processing-job parent references. These constraints exercise missing projections without violating legitimate foreign keys.
+- Combine the document acceptance checks with job acceptance checks, retain the quote-aware plan-corruption probe, and choose document probes with at least one parsed page and no processing-job parent references. These constraints exercise missing projections without violating legitimate foreign keys.
 - Keep every migration through 0013 unchanged. Reads/writes for commercial quotes retain their existing paths in this phase.
 
 ## Validation
@@ -28,7 +28,7 @@ All six source PRs were open, unmerged and individually green when this candidat
 - Local TypeScript and production frontend build: passed.
 - Local combined backend suite: 171 tests passed.
 - Local fresh SQLite/Chromium workflow: 36 checks passed; all eighteen screens, full-width photographic headers, mobile layout, distinct approval authority, simulator reconciliation, receipts, invoice recheck, closed order, supplier scope and audit.
-- Combined hosted PostgreSQL, concurrency and same-container restore validation: pending; see the draft candidate PR for final evidence.
+- See the draft candidate PR for the exact tested commit and final hosted PostgreSQL, concurrency and same-container restore evidence.
 
 The historical 957-check claim in the case study remains linked to its original CI run and tested revision. It is not the combined candidate's check count. Synthetic results are not measured savings, real supplier certification or production readiness.
 
@@ -38,6 +38,6 @@ Review #17 and #18 against main, then #19. Follow with #20, #21 and #22 in depen
 
 ## Operational gates
 
-The development database is reported at 0013. The last supplied successful private backup was taken before that upgrade at 0012; a post-0013 backup/restore verification has not yet been supplied. Record that checkpoint before a development installation or operational release. Keep private dumps and runtime files out of GitHub.
+The development database is at 0013. On 26 November 2026, a private post-0013 backup and separate restore verification passed: all public table rows, columns, constraints, indexes, owners, RLS, functions, triggers and grants matched, and the closed AED 7,250 order was preserved. The development portal was stopped with operator authorization; the separate UI preview stayed running. Keep the backup and runtime files private. Database data and installed source were not changed by this release validation. Restarting the PostgreSQL portal requires the operator's existing database password.
 
 The interactive UI preview uses separate synthetic SQLite data. It is not the PostgreSQL development installation. Live ERP, email and payments remain disconnected. Production rollout, production acceptance and live integrations belong to later phases.

@@ -503,7 +503,7 @@ def read_checks(client,password,check,sql,clone):
         sql(clone,"UPDATE proc_exceptions SET resolved_at='"+original_time.replace("'","''")+"' WHERE tenant='demo' AND id='"+timed+"'")
 
 
-    document_id=sql(clone,"SELECT d.id FROM proc_documents d WHERE d.tenant='demo' AND NOT EXISTS (SELECT 1 FROM proc_document_jobs j WHERE j.tenant=d.tenant AND j.document_id=d.id) ORDER BY d.id LIMIT 1")
+    document_id=sql(clone,"SELECT d.id FROM proc_documents d WHERE d.tenant='demo' AND d.page_count>0 AND NOT EXISTS (SELECT 1 FROM proc_document_jobs j WHERE j.tenant=d.tenant AND j.document_id=d.id) ORDER BY d.id LIMIT 1")
     saved_header=sql(clone,"SELECT to_jsonb(d)::text FROM proc_documents d WHERE tenant='demo' AND id='"+document_id+"'")
     saved_pages=sql(clone,"SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY page_index),'[]'::jsonb)::text FROM proc_document_pages p WHERE tenant='demo' AND document_id='"+document_id+"'")
     def restore_document():
