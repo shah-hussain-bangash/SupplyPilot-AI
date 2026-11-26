@@ -24,7 +24,7 @@ def workflow(client, password, check, race=None):
 
     def record(rid):
         result=request('GET','/record/'+rid)
-        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','document','job'):
+        if result['kind'] in ('order','receipt','invoice','stock','plan','exception','document','job','customer_quote'):
             from fastapi.encoders import jsonable_encoder
             from supplypilot.db import Session
             from supplypilot.security import lookup_identity
@@ -211,7 +211,7 @@ def read_checks(client,password,check,sql,clone):
         response=client.post('/api/v1/auth/login',json={'username':role,'password':password})
         if response.status_code!=200:raise AssertionError('Read comparison login failed for '+role)
         tokens[role]={'Authorization':'Bearer '+response.json()['access_token']}
-        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document','job'):
+        for kind in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document','job','customer_quote'):
             with Session() as db:
                 user=lookup_identity(db,role,by_username=True)
                 rows=records(db,user,kind)
@@ -557,6 +557,9 @@ def read_checks(client,password,check,sql,clone):
 
 
     job_read_probes(client,check,sql,clone,tokens)
+    from postgres_customer_quote_read_cases import quote_read_probes
+    quote_read_probes(client,check,sql,clone,tokens)
+    return tokens
 
 
 def exception_workflow(client,password,check,tokens):
