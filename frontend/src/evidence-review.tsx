@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
-import {Row} from './api';
+import {Row,downloadOriginal} from './api';
 import {candidateAnchor,currentFieldReview,citationAnchor} from './evidence-model';
 import './evidence-review.css';
 import type {SearchCitation} from './document-search';
@@ -20,6 +20,15 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
   const [decision,setDecision]=useState<FieldReviewInput['decision']>('accepted'),[reason,setReason]=useState(''),[correction,setCorrection]=useState('');
   const [saving,setSaving]=useState(false),[reviewMessage,setReviewMessage]=useState(''),[reviewError,setReviewError]=useState('');
   const requestIdentity=useRef<{signature:string;key:string}|null>(null);
+  const [downloading,setDownloading]=useState(false),[downloadMessage,setDownloadMessage]=useState(''),[downloadError,setDownloadError]=useState('');
+  const downloadController=useRef<AbortController|null>(null);
+  useEffect(()=>()=>downloadController.current?.abort(),[]);
+  async function downloadSource(){
+    const controller=new AbortController();downloadController.current=controller;setDownloading(true);setDownloadMessage('');setDownloadError('');
+    try{await downloadOriginal(document,controller.signal);if(!controller.signal.aborted)setDownloadMessage('Original source downloaded. Its file hash matches this document revision.');}
+    catch(error){if(!controller.signal.aborted)setDownloadError(error instanceof Error?error.message:String(error));}
+    finally{if(!controller.signal.aborted)setDownloading(false);}
+  }
   const heading=useRef<HTMLHeadingElement>(null);
   useEffect(()=>{heading.current?.focus({preventScroll:true});heading.current?.scrollIntoView({block:'start',behavior:'instant'});},[]);
   const current=candidates[selected];
@@ -52,6 +61,7 @@ export function EvidenceReview({snapshot,reviews,canReview,onRecordReview,onClos
     <div className="evidence-summary"><div><span>Source document</span><strong>{label(document.data.filename,'Source document')}</strong></div><div><span>Extraction</span><strong>{document.data.status==='quarantined'?'Manual source handling required':document.data.ocr?'Local OCR · human review required':'Extracted text · human review required'}</strong></div><div><span>Source status</span><strong>{label(document.data.status).replaceAll('_',' ')}</strong></div></div>
     {document.data.status==='quarantined'&&<p className="evidence-warning">Quarantined source: extracted text may be incomplete. Manual source handling is required.</p>}
     {document.data.ocr&&<p className="evidence-warning">OCR can contain recognition errors. Highlights refer to extracted text, not positions in the original scan.</p>}
+    <section className="evidence-original" aria-label="Original source file"><div><h3>Original source file</h3><p>Download the stored file to compare it with the extracted text in your own viewer. File identity is checked against this document revision.</p><small>{document.data.malware_scanned?'Malware scanning is recorded in source metadata.':'Malware scanning is not recorded for this source.'} Material and purchasing approvals remain separate.</small></div><button type="button" className="quiet" disabled={downloading||document.data.status==='quarantined'} onClick={downloadSource}>{downloading?'Checking original source…':'Download original source'}</button>{document.data.status==='quarantined'&&<p className="evidence-warning">Original downloads are unavailable for quarantined sources.</p>}{downloadMessage&&<p role="status" className="success">{downloadMessage}</p>}{downloadError&&<p role="alert" className="error">{downloadError}</p>}</section>
     <div className="evidence-columns">
       <section className="evidence-fields" aria-label="Extracted candidate fields"><div className="evidence-column-heading"><h3>Extracted fields</h3><span>{allCandidates.length} candidates</span></div>
         {candidates.length>0&&<p>Select a field to see its text reference.</p>}

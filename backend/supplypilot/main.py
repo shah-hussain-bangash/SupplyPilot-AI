@@ -10,8 +10,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Request, Query
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 from starlette.concurrency import run_in_threadpool
@@ -224,13 +224,28 @@ def model_extract(rid:str,user=Depends(actor),db=Depends(get_db,scope='function'
     return view(create(db,user,'job',{'document_id':rid,'state':'completed','execution':'private-model-gateway','result':result}))
 
 @app.get('/api/v1/documents/{rid}/download')
-def download(rid:str,user=Depends(actor),db=Depends(get_db,scope='function')):
+def download(rid:str,expected_revision:int|None=Query(default=None,ge=1),
+             expected_sha256:str|None=Query(default=None,pattern=r'^[0-9a-f]{64}$'),
+             user=Depends(actor),db=Depends(get_db,scope='function')):
+    from urllib.parse import quote
     d=get(db,user,rid,'document')
     if d.data['status']=='quarantined':fail('quarantined','Quarantined documents cannot be downloaded through this endpoint',403)
+    if expected_revision is not None and d.revision!=expected_revision:
+        fail('revision_conflict','The document changed; reopen its evidence before downloading')
+    if expected_sha256 is not None and d.data['sha256']!=expected_sha256:
+        fail('source_changed','The source hash changed; reopen its evidence before downloading')
     path=config.DATA/'documents'/d.id
     if not path.is_file():fail('not_found','Source blob unavailable',404)
-    audit(db,user,'document.downloaded',rid)
-    return FileResponse(path,filename=d.data['filename'],media_type='application/octet-stream')
+    with path.open('rb') as source:raw=source.read(5*1024*1024+1)
+    if len(raw)>5*1024*1024:fail('source_limit','Original source exceeds the download limit',413)
+    digest=hashlib.sha256(raw).hexdigest()
+    if digest!=d.data['sha256']:
+        fail('source_blob_mismatch','Original source bytes do not match this record; contact support',503)
+    audit(db,user,'document.downloaded',rid,{'source_sha256':digest,'source_revision':d.revision})
+    return Response(raw,media_type='application/octet-stream',headers={
+        'Content-Disposition':"attachment; filename*=utf-8''"+quote(d.data['filename'],safe=''),
+        'X-Content-Type-Options':'nosniff','Cache-Control':'no-store',
+        'X-SupplyPilot-Source-SHA256':digest,'X-SupplyPilot-Source-Revision':str(d.revision)})
 
 @app.post('/api/v1/search')
 def search(body:S.Search,user=Depends(actor),db=Depends(get_db,scope='function')):

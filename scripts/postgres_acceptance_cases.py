@@ -635,6 +635,15 @@ def document_workflow(client,password,check,tokens):
         check(evidence=={'document_id':result['id'],'sha256':hashlib.sha256(raw).hexdigest(),'pages':[text],'parser':'pypdf/text-v1'},role+' evidence preserves exact Unicode text, source hash and parser')
         downloaded=request('GET','/documents/'+result['id']+'/download',role)
         check(downloaded.content==raw,role+' source download bytes remain unchanged')
+        pinned=request('GET','/documents/'+result['id']+'/download',role,params={
+            'expected_revision':result['revision'],'expected_sha256':result['data']['sha256']})
+        check(pinned.content==raw and pinned.headers['X-SupplyPilot-Source-SHA256']==result['data']['sha256']
+              and pinned.headers['X-SupplyPilot-Source-Revision']==str(result['revision']),
+              role+' pinned original download preserves exact bytes, hash and revision')
+        stale=request('GET','/documents/'+result['id']+'/download',role,409,
+            params={'expected_revision':result['revision']+1})
+        check('Content-Disposition' not in stale.headers,role+' stale source binding returns no attachment')
+
     for owner in ('buyer','supplier-desert'):
         for path in ('/record/','/documents/'):
             suffix='' if path=='/record/' else '/evidence'

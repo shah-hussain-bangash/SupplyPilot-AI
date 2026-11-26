@@ -190,3 +190,14 @@ On PostgreSQL, one tenant-scoped query reads synchronized document metadata and 
 This is a bounded lexical retrieval foundation. Hybrid/semantic search, representative-corpus relevance evaluation, incremental indexing, production scale and generated answers remain future work. Exact citations establish where text came from; they do not establish that it is correct or independently verified.
 
 Verification: `python -m pytest tests/test_document_search.py` from backend, frontend contracts/build, the isolated browser suite and `python scripts/test_postgres.py --docker --concurrency --restore-check --report acceptance.json`. These exercise Unicode citations, no-evidence abstention, hostile source text, role/tenant boundaries, normalized-page reads and projection failures without using the installed development database.
+
+
+## Original source access from evidence review
+
+The Evidence workspace offers **Download original source**, so a reviewer can compare the actual uploaded file with recognized text using their own viewer. The existing authenticated endpoint retains tenant/supplier scope, blocks quarantined documents and records successful access in the protected audit log. No token is placed in the URL, no source opens automatically, and no external viewer or model service receives the file.
+
+The workspace sends its expected document revision and SHA-256. Changed metadata conflicts before transfer; missing, oversized or hash-mismatched stored blobs fail without an attachment. The server reads and verifies the exact bounded byte buffer it returns, with an attachment disposition, `nosniff` and `no-store` headers. Source hash and revision are included in the download audit details. The browser independently checks the returned revision/hash and computes SHA-256 over the bytes before creating a local download; navigation cancels an in-flight request and temporary object URLs are revoked. Existing callers may omit the optional expected binding, but stored bytes are still checked. The limit matches the existing 5 MiB source upload limit.
+
+Hash agreement establishes file identity, not malware safety, authenticity or material compliance. The existing unscanned metadata remains visible. Files are downloaded for manual review; inline PDF execution, original-page bounding boxes and antivirus scanning are not added. No migration, supplier verification or purchasing approval is performed.
+
+Focused checks: `python -m pytest tests/test_original_source.py` from backend. The isolated browser suite verifies an authenticated exact-byte download and rejects altered transport bytes before creating a file. Existing PostgreSQL download isolation and restore checks remain part of `python scripts/test_postgres.py --docker --concurrency --restore-check`.
