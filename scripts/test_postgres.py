@@ -253,8 +253,11 @@ def main():
                 race=build_race(check,sql) if args.concurrency else None
                 case=workflow(client,portal_password,check,race=race)
                 baseline=row_hashes()
-                read_checks(client,portal_password,check,sql,'supplypilot_dev')
+                read_tokens=read_checks(client,portal_password,check,sql,'supplypilot_dev')
                 check(row_hashes()==baseline,'Read probes restore every synthetic checkpoint row')
+                from postgres_customer_quote_read_cases import quote_workflow
+                quote_plan=sql('supplypilot_dev',"SELECT plan_id FROM proc_orders WHERE id='"+case['order_id']+"'")
+                quote_workflow(client,check,read_tokens,quote_plan)
             oid=case['order_id']
             check(sql('supplypilot_dev',f"SELECT status||'|'||total FROM proc_orders WHERE id='{oid}'")=='closed|7250.00',
                   'Relational order remains closed at AED 7250')

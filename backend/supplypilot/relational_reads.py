@@ -6,6 +6,7 @@ A missing or stale projection fails closed instead of returning legacy values.
 """
 from copy import deepcopy
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
 from sqlalchemy import text
 
@@ -18,7 +19,7 @@ def _timestamp(value):
 
 
 def _ready(db, kind):
-    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan', 'exception', 'document', 'job') and db.get_bind().dialect.name == 'postgresql'
+    return kind in ('supplier', 'rfq', 'offer', 'order', 'receipt', 'invoice', 'stock', 'plan', 'exception', 'document', 'job', 'customer_quote') and db.get_bind().dialect.name == 'postgresql'
 
 
 def _query(kind, user, single=False, include_pages=False):
@@ -34,6 +35,11 @@ def _query(kind, user, single=False, include_pages=False):
           (SELECT count(*) FROM public.proc_document_pages p
            WHERE p.tenant=r.tenant AND p.document_id=r.id) AS stored_page_count,"""+pages+' AS pages'
         table = 'proc_documents'
+    elif kind == 'customer_quote':
+        fields = '''h.plan_id,h.net::text AS net,h.cost::text AS cost,
+          h.contribution::text AS contribution,h.margin_pct::text AS margin_pct,
+          h.status,h.sent,h.note,h.source_snapshot'''
+        table = 'proc_customer_quotes'
     elif kind == 'job':
         fields = 'h.document_id,h.state,h.execution,h.result,h.candidate_count,h.model_version,h.source_snapshot'
         table = 'proc_document_jobs'
@@ -96,10 +102,11 @@ def _query(kind, user, single=False, include_pages=False):
     if user.role == 'supplier' and kind in ('offer','document'):
         visibility = " AND r.data->>'supplier_id'=:supplier_id AND h.supplier_id=:supplier_id"
     elif user.role == 'supplier':
-        visibility = (' AND false' if kind in ('job','supplier','order','receipt','invoice','stock','plan','exception','document') else """ AND EXISTS
+        visibility = (' AND false' if kind in ('job','supplier','order','receipt','invoice','stock','plan','exception','document','customer_quote') else """ AND EXISTS
           (SELECT 1 FROM public.proc_rfq_invitations v WHERE v.tenant=r.tenant
            AND v.rfq_id=r.id AND v.supplier_id=:supplier_id)""")
     source_data="r.data::jsonb-'pages' AS data" if kind=='document' else 'r.data'
+    if kind=='customer_quote':source_data="'{}'::jsonb AS data"
     if kind=='job':source_data="r.data::jsonb-'result' AS data"
     return f"""SELECT r.id,r.kind,r.revision,r.created_at,r.updated_at,{source_data},
         h.source_revision,{fields}
@@ -125,7 +132,21 @@ def _view(row, user):
         len(row['result']['candidates'])!=row['candidate_count']):
         raise HTTPException(503, {'code':'projection_not_ready',
             'message':'Document processing result is incomplete; contact support'})
-    data = deepcopy(row['source_snapshot'] if row['kind'] in ('exception','document','job') else row['data'])
+    if row['kind']=='customer_quote':
+        snapshot=row['source_snapshot']
+        try:
+            # Preserve the stored application's decimal strings and half-even
+            # margin snapshot; never recalculate against a changed live plan.
+            amounts=('net','cost','contribution','margin_pct')
+            valid=isinstance(snapshot,dict) and all(
+                isinstance(snapshot.get(key),str) and Decimal(snapshot[key]).is_finite()
+                and Decimal(snapshot[key])==Decimal(row[key]) for key in amounts)
+        except (InvalidOperation,ValueError,TypeError):
+            valid=False
+        if not valid:
+            raise HTTPException(503, {'code':'projection_not_ready',
+                'message':'Customer quote commercial snapshot is incomplete; contact support'})
+    data = deepcopy(row['source_snapshot'] if row['kind'] in ('exception','document','job','customer_quote') else row['data'])
     def field(key, value):
         # Preserve absent optional keys to keep the existing JSON contract exact.
         if key in data or value is not None:
@@ -137,6 +158,9 @@ def _view(row, user):
         for key in ('filename','sha256','status','error','supplier_id','parser','malware_scanned'):
             field(key,deepcopy(row[key]))
         data.pop('pages',None)
+    elif row['kind'] == 'customer_quote':
+        for key in ('plan_id','status','sent','note'):
+            field(key,row[key])
     elif row['kind'] == 'job':
         for key in ('document_id','state','execution'):
             field(key,row[key])
@@ -244,7 +268,7 @@ def record(db,user,rid):
     if db.get_bind().dialect.name!='postgresql':return None
     kind=db.execute(text('SELECT kind FROM public.records WHERE tenant=:tenant AND id=:rid'),
                     {'tenant':user.tenant,'rid':rid}).scalar_one_or_none()
-    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document', 'job'):return None
+    if kind not in ('supplier','rfq','offer','order','receipt','invoice','stock','plan','exception','document', 'job','customer_quote'):return None
     params={'tenant':user.tenant,'kind':kind,'supplier_id':user.supplier_id,'rid':rid}
     row=db.execute(text(_query(kind,user,True)),params).mappings().one_or_none()
     if row is None:raise HTTPException(404,{'code':'not_found','message':'Resource unavailable'})
