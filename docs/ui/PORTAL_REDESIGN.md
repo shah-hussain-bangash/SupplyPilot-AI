@@ -23,6 +23,6 @@ The new UI branch is based on the existing customer-quote storage branch so its 
 
 ## Inner-page visual refinement
 
-All seventeen inner portal pages now have a contextual photographic introduction, clear workflow category and short task description. The overview also has photographic quick-action thumbnails. Images reuse the repository's existing local WebP illustration library, avoiding new image downloads or external services. Header illustrations are decorative, explicitly labeled, and do not represent supplier evidence or completed business checks. Forms and tables stay on plain surfaces. Mobile places the image above its introduction and retains full navigation.
+All seventeen inner portal pages now have a contextual photographic introduction, clear workflow category and short task description. The overview also has photographic quick-action thumbnails. Images reuse the repository's existing local WebP illustration library, avoiding new image downloads or external services. Header illustrations are decorative, explicitly labeled, and do not represent supplier evidence or completed business checks. Forms and tables stay on plain surfaces. Each image fills its entire header, like Overview, with a dark contrast overlay behind readable text. Mobile retains the full-width image, readable introduction and full navigation.
 
 Browser acceptance decodes every page illustration, checks all eighteen page headings, captures representative inner-page screenshots and verifies the mobile Documents layout, alongside the original procurement workflow.

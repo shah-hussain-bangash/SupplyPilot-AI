@@ -86,13 +86,13 @@ const path=require('node:path');
       if(screen!=='Overview'){
         const image=page.locator('.portal-page-image img');
         await image.evaluate(img=>img.decode());
-        assert(await image.evaluate(img=>img.naturalWidth>0 && img.getBoundingClientRect().width>0));
+        assert(await image.evaluate(img=>{const banner=img.closest('.portal-page-banner').getBoundingClientRect();const picture=img.getBoundingClientRect();return img.naturalWidth>0 && Math.abs(picture.width-(banner.width-2))<2 && Math.abs(picture.height-(banner.height-2))<2;}));
         assert((await page.locator('.portal-page-description').innerText()).length>20);
       }
-      if(['Documents','Inventory','Sourcing','Receiving','Invoices'].includes(screen))
+      if(['Documents','Compliance','Inventory','Sourcing','Receiving','Invoices'].includes(screen))
         await page.screenshot({path:path.join(out,screen.toLowerCase()+'-desktop.png'),fullPage:true});
     }
-    pass('Every inner portal page loads its illustration and useful page introduction');
+    pass('Every inner portal page loads a full-width photograph and readable page introduction');
     pass('All 18 buyer screens load without an alert');
     await nav('Approvals');assert.equal(await button('Approve').count(),0);pass('Buyer cannot approve purchasing');
     await logout();await login('technical');await nav('Compliance');
