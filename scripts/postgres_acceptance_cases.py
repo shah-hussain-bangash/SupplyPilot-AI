@@ -197,6 +197,8 @@ def workflow(client, password, check, race=None):
     job_workflow(client,password,check,tokens)
     document_workflow(client,password,check,tokens)
     exception_workflow(client,password,check,tokens)
+    from postgres_ocr_cases import ocr_workflow
+    ocr_workflow(client,check,tokens)
     return {'intent_id':intent['id'],'rfq_id':rfq['id'],'order_id':oid,'sku':sku,'external_id':confirmed['external_id'],
             'invoice_ids':[good['id'],rechecked['id']]}
 

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage, release/phase-1-validation]
+    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage, release/phase-1-validation, feature/customer-quote-relational-reads]
   workflow_dispatch:
 
 permissions:
@@ -32,9 +32,15 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements.txt
+      - name: Install local OCR test tools
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng poppler-utils
       - name: Run isolated backend tests
+        env:
+          REQUIRE_LOCAL_OCR: 'true'
         working-directory: backend
         run: python -m pytest -q
+      - name: Verify real OCR engine fixture labels
+        run: python scripts/ocr_engine_smoke.py
 
   frontend:
     name: Frontend typecheck and build

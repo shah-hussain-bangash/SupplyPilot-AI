@@ -14,6 +14,8 @@ from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
+from starlette.concurrency import run_in_threadpool
+from .document_ocr import extract_scanned_pages
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from . import config, schemas as S, procurement as P
@@ -164,22 +166,29 @@ async def upload(file:UploadFile=File(...),user=Depends(actor),db=Depends(get_db
     if len(raw)>config.MAX_UPLOAD:fail('upload_too_large','Maximum upload is 5 MiB',413)
     filename=Path(file.filename or 'source').name;ext=Path(filename).suffix.lower()
     if ext not in ('.pdf','.txt','.csv','.json'):fail('unsupported_file','Use PDF, TXT, CSV or JSON; images and Office OCR are deferred',422)
-    pages=[];status='review_required';error=None
+    pages=[];status='review_required';error=None;ocr_metadata=None;parser='pypdf/text-v1'
     try:
         if ext=='.pdf':
             if not raw.startswith(b'%PDF-'):raise ValueError('Invalid PDF signature')
             reader=PdfReader(io.BytesIO(raw))
             if reader.is_encrypted or len(reader.pages)>60:raise ValueError('Encrypted PDFs or documents over 60 pages are not supported')
             pages=[(p.extract_text() or '')[:20000] for p in reader.pages]
+            if config.LOCAL_OCR_ENABLED and any(not p.strip() for p in pages):
+                parser='pypdf/tesseract-v1'
+                pages,ocr_metadata=await run_in_threadpool(extract_scanned_pages,raw,pages)
         else:pages=[raw.decode('utf-8')[:200000]]
         if not any(p.strip() for p in pages):raise ValueError('No text found; scanned sources require OCR and manual processing')
     except Exception:
         status='quarantined';error='Unable to safely parse supported text; manual review required'
-    doc=create(db,user,'document',{'filename':filename,'sha256':hashlib.sha256(raw).hexdigest(),'status':status,'error':error,'pages':pages,'supplier_id':user.supplier_id,'parser':'pypdf/text-v1','malware_scanned':False})
+    doc=create(db,user,'document',{'filename':filename,'sha256':hashlib.sha256(raw).hexdigest(),'status':status,'error':error,'pages':pages,'supplier_id':user.supplier_id,'parser':parser,'malware_scanned':False,**({'ocr':ocr_metadata} if ocr_metadata else {})})
     (config.DATA/'documents').mkdir(exist_ok=True)
     (config.DATA/'documents'/doc.id).write_bytes(raw)
     if status=='review_required':
         result=extraction_graph.invoke({'pages':pages,'candidates':[],'flags':[]})
+        if ocr_metadata:
+            result['ocr']=deepcopy(ocr_metadata)
+            result['flags']=['Human review required','Local OCR text may contain recognition errors',
+                             'Text-offset anchors refer to extracted text; source-image bounding boxes are not implemented']
         create(db,user,'job',{'document_id':doc.id,'state':'completed','execution':'synchronous-bounded-graph','result':result})
     audit(db,user,'document.ingested',doc.id,{'status':status,'sha256':doc.data['sha256']})
     return view(doc,user)
