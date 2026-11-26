@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 class Input(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -12,6 +12,30 @@ class Login(Input):
 
 class Mutation(Input):
     expected_revision: int = Field(ge=1)
+
+class EvidenceReview(Input):
+    expected_job_revision: int = Field(ge=1,strict=True)
+    expected_document_revision: int = Field(ge=1,strict=True)
+    source_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    candidate_index: int = Field(ge=0,le=100000,strict=True)
+    decision: Literal['accepted','rejected','corrected']
+    corrected_value: str | None = Field(default=None,min_length=1,max_length=500)
+    reason: str = Field(min_length=5,max_length=1000)
+    key: str = Field(min_length=8,max_length=80,pattern=r'^[A-Za-z0-9_-]+$')
+
+    @field_validator('reason','corrected_value')
+    @classmethod
+    def meaningful_text(cls,value):
+        if value is None:return value
+        if not value.strip():raise ValueError('Review text must not be blank')
+        return value.strip()
+
+    @model_validator(mode='after')
+    def correction_matches_decision(self):
+        if (self.decision=='corrected') != (self.corrected_value is not None):
+            raise ValueError('Only a corrected extraction requires a corrected value')
+        if len(self.reason)<5:raise ValueError('Explain the field-review decision')
+        return self
 
 class Line(Input):
     sku: str = Field(min_length=1, max_length=80)

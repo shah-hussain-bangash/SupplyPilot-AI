@@ -1,5 +1,14 @@
 export type Anchor = {page:number; start:number; end:number};
 
+export function currentFieldReview(reviews:any[],binding:{jobId:string;jobRevision:number;documentRevision:number;sha256:string},index:number,candidate:any):any|null {
+  return reviews.filter(review=>{
+    const data=review?.data;
+    return data?.job_id===binding.jobId&&data.job_revision===binding.jobRevision&&
+      data.document_revision===binding.documentRevision&&data.source_sha256===binding.sha256&&
+      data.candidate_index===index&&['field','raw','normalized','page','start','end'].every(key=>data.candidate_snapshot?.[key]===candidate?.[key]);
+  }).sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime()||b.id.localeCompare(a.id))[0]||null;
+}
+
 // Highlight only offsets that match both the processing snapshot and the
 // currently authorized source response. Never search for a replacement match.
 export function candidateAnchor(candidate:any, pages:string[], processedPages:unknown):Anchor|null {

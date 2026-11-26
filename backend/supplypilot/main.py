@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 from starlette.concurrency import run_in_threadpool
 from .document_ocr import extract_scanned_pages
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func
 from sqlalchemy.exc import IntegrityError, OperationalError
 from . import config, schemas as S, procurement as P
 from .db import Session, User, Record, Audit, Outbox, get_db, now
@@ -25,7 +25,7 @@ from .domain import create, get, records, save, view, fail, evidence, audit
 from .intelligence import extraction_graph, search_pages, backtest
 from .integrations import intent_view, get_intent, process
 from .planning import money
-from . import relational_reads
+from . import relational_reads, evidence_reviews
 
 # Finish the shared request transaction before acknowledging the response.
 # Authentication and endpoints use the same function-scoped cached dependency.
@@ -76,7 +76,7 @@ def login(body:S.Login,request:Request,db=Depends(get_db,scope='function')):
 @app.get('/api/v1/me')
 def me(user=Depends(actor)):return profile(user)
 
-KINDS={'rfq','supplier','stock','offer','plan','order','receipt','invoice','exception','document','job','feedback','evaluation','customer_quote'}
+KINDS={'rfq','supplier','stock','offer','plan','order','receipt','invoice','exception','document','job','feedback','evaluation','customer_quote','evidence_review'}
 
 @app.get('/api/v1/records/{kind}')
 def collection(kind:str,offset:int=0,limit:int=100,user=Depends(actor),db=Depends(get_db,scope='function')):
@@ -192,6 +192,21 @@ async def upload(file:UploadFile=File(...),user=Depends(actor),db=Depends(get_db
         create(db,user,'job',{'document_id':doc.id,'state':'completed','execution':'synchronous-bounded-graph','result':result})
     audit(db,user,'document.ingested',doc.id,{'status':status,'sha256':doc.data['sha256']})
     return view(doc,user)
+
+@app.get('/api/v1/jobs/{rid}/field-reviews')
+def field_reviews(rid:str,offset:int=0,limit:int=100,user=Depends(actor),db=Depends(get_db,scope='function')):
+    get(db,user,rid,'job')
+    if offset<0 or not 1<=limit<=200:fail('pagination','Invalid page bounds',422)
+    scope=(Record.tenant==user.tenant,Record.kind=='evidence_review',Record.data['job_id'].as_string()==rid)
+    total=db.scalar(select(func.count()).select_from(Record).where(*scope))
+    rows=db.scalars(select(Record).where(*scope).order_by(Record.created_at.desc(),Record.id.desc()).offset(offset).limit(limit))
+    return {'items':[view(row,user) for row in rows],'total':total,'offset':offset,'limit':limit}
+
+
+@app.post('/api/v1/jobs/{rid}/field-reviews',status_code=201)
+def field_review(rid:str,body:S.EvidenceReview,user=Depends(actor),db=Depends(get_db,scope='function')):
+    allow(user,'technical')
+    return view(evidence_reviews.record_review(db,user,rid,body),user)
 
 @app.get('/api/v1/documents/{rid}/evidence')
 def doc_evidence(rid:str,user=Depends(actor),db=Depends(get_db,scope='function')):
