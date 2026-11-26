@@ -19,8 +19,10 @@ def main():
     parser.add_argument('--repository',type=Path,default=Path(__file__).resolve().parents[1])
     parser.add_argument('--prepare',action='store_true',help='Install locked frontend packages, build and install Chromium')
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--commit-delay-ms',type=int,default=0,help='Test-only delay before SQLite commits (0..1000ms)')
     parser.add_argument('--playwright-module',type=Path,help='Optional installed Playwright package for a local rehearsal')
     args=parser.parse_args()
+    if not 0<=args.commit_delay_ms<=1000:parser.error('commit delay must be between 0 and 1000 ms')
     repo=args.repository.resolve();backend=repo/'backend';frontend=repo/'frontend'
     npm=shutil.which('npm.cmd' if os.name=='nt' else 'npm')
     node=shutil.which('node')
@@ -50,8 +52,18 @@ def main():
         for command in ('migrate','seed'):
             subprocess.run([sys.executable,'-m','supplypilot.manage',command],cwd=backend,
                            env=env,check=True,creationflags=flags)
-        server=subprocess.Popen([sys.executable,'-m','uvicorn','supplypilot.main:app',
-            '--host','127.0.0.1','--port','0','--no-use-colors'],cwd=backend,env=env,
+        server_command=[sys.executable,'-m','uvicorn','supplypilot.main:app',
+            '--host','127.0.0.1','--port','0','--no-use-colors']
+        if args.commit_delay_ms:
+            # Only this disposable server is instrumented; application code has
+            # no delay setting and the development database is never connected.
+            code=("import time,uvicorn\nfrom supplypilot.db import TenantSession,engine\n"
+                  "assert engine.dialect.name=='sqlite'\noriginal=TenantSession.commit\n"
+                  "def delayed_commit(db):\n    time.sleep("+str(args.commit_delay_ms/1000)+")\n    return original(db)\n"
+                  "TenantSession.commit=delayed_commit\n"
+                  "uvicorn.run('supplypilot.main:app',host='127.0.0.1',port=0,use_colors=False)\n")
+            server_command=[sys.executable,'-c',code]
+        server=subprocess.Popen(server_command,cwd=backend,env=env,
             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,creationflags=flags)
         logs=[];messages=queue.Queue()
         def collect():

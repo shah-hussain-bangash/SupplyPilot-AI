@@ -41,7 +41,7 @@ def lookup_identity(db, identity, by_username=False):
     return user
 
 
-def actor(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db=Depends(get_db)):
+def actor(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db=Depends(get_db,scope='function')):
     if credentials is None:
         raise HTTPException(401, 'Authentication required')
     try:

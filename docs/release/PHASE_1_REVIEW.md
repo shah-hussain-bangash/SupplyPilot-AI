@@ -26,7 +26,7 @@ All six source PRs were open, unmerged and individually green when this candidat
 ## Validation
 
 - Local TypeScript and production frontend build: passed.
-- Local combined backend suite: 171 tests passed.
+- Local combined backend suite: 174 tests, including three response/commit regression cases.
 - Local fresh SQLite/Chromium workflow: 36 checks passed; all eighteen screens, full-width photographic headers, mobile layout, distinct approval authority, simulator reconciliation, receipts, invoice recheck, closed order, supplier scope and audit.
 - See the draft candidate PR for the exact tested commit and final hosted PostgreSQL, concurrency and same-container restore evidence.
 
@@ -34,10 +34,18 @@ The historical 957-check claim in the case study remains linked to its original 
 
 ## Integration order after explicit authorization
 
-Review #17 and #18 against main, then #19. Follow with #20, #21 and #22 in dependency order, checking each updated base and resolving document/job adapter and acceptance-probe overlaps using this validated composition. This candidate is validation evidence; do not merge it automatically alongside the originals. Choose the release strategy explicitly to avoid duplicate integration.
+Review #17 and #18 against main, then #19. Follow with #20, #21 and #22 in dependency order, checking each updated base and resolving document/job adapter and acceptance-probe overlaps using this validated composition. The candidate also contains the response/commit stability fix described below. If integrating the originals individually, include that focused fix before final validation. Alternatively, explicitly authorize integration of this combined candidate and reconcile the original PRs afterward. Do not integrate both strategies automatically.
 
 ## Operational gates
 
 The development database is at 0013. On 26 November 2026, a private post-0013 backup and separate restore verification passed: all public table rows, columns, constraints, indexes, owners, RLS, functions, triggers and grants matched, and the closed AED 7,250 order was preserved. The development portal was stopped with operator authorization; the separate UI preview stayed running. Keep the backup and runtime files private. Database data and installed source were not changed by this release validation. Restarting the PostgreSQL portal requires the operator's existing database password.
 
 The interactive UI preview uses separate synthetic SQLite data. It is not the PostgreSQL development installation. Live ERP, email and payments remain disconnected. Production rollout, production acceptance and live integrations belong to later phases.
+
+## Release-blocking transaction timing defect
+
+The combined review reproduced a defect in the existing API: request-scoped yield dependencies can send the success response before `get_db` commits. A subsequent refresh can therefore miss the newly queued execution, and deferred commit errors can occur after HTTP success has started. See the [FastAPI dependency lifecycle documentation](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#early-exit-and-scope).
+
+The candidate uses the same cached function-scoped database dependency in authentication and endpoints, so tenant binding and the shared transaction stay intact and commit completes before the response is sent. Three regression cases were demonstrated failing before the fix: success-before-commit, integrity failure after success, and operational failure after success. They pass with the fix, including source/audit rollback and correct 409/503 responses. No migration or business authority changes are required.
+
+The disposable browser runner supports an explicit test-only commit delay. Candidate CI uses 250 ms to verify real UI refresh behavior against delayed persistence. It changes only the runner-owned synthetic SQLite process, not product configuration or the development database. All ordinary approval, reconciliation and isolation checks remain enabled.

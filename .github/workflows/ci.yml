@@ -114,4 +114,4 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps chromium
       - name: Test real browser procurement workflow
-        run: python scripts/test_browser.py
+        run: python scripts/test_browser.py --commit-delay-ms 250
