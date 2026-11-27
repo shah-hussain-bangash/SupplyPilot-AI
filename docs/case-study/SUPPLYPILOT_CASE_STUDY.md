@@ -8,14 +8,16 @@
 
 | Project | At a glance |
 |---|---|
-| Project owner | Shah Hussain Bangash · [GitHub](https://github.com/zenithdevelopers7-source) |
+| Project owner | Shah Hussain Bangash · [GitHub](https://github.com/shah-hussain-bangash) |
 | Business domain | Industrial-material procurement and supplier collaboration |
-| Source baseline | [`8d983bb`, main, 21 November 2026][baseline] |
+| Historical source baseline | [`8d983bb`, main, 21 November 2026][baseline] |
 | Application | React / TypeScript / Vite, FastAPI / Python and SQLAlchemy |
 | Decision and processing engines | OR-Tools CP-SAT and a bounded deterministic LangGraph extraction pipeline |
-| Persistence | SQLite demonstration; PostgreSQL migration chain through `0007_proc_fulfillment`, with tenant RLS and synchronized relational reads |
+| Historical persistence baseline | SQLite demonstration; PostgreSQL migration chain through `0007_proc_fulfillment`, with tenant RLS and synchronized relational reads |
 | External execution | Durable local ERP simulator; live purchasing integrations remain further work |
-| Hosted evidence | [CI run 44882883031][ci]: backend tests, frontend typecheck/build and PostgreSQL acceptance jobs all successful; 321 named PostgreSQL checks passed |
+| Historical hosted evidence | [CI run 44882883031][ci]: backend tests, frontend typecheck/build and PostgreSQL acceptance jobs all successful; 321 named PostgreSQL checks passed |
+
+**Start here:** [Three-minute merged architecture example](#three-minute-merged-architecture-example), reproduced from `11b6204` on 24 November 2026. The original narrative and its pinned 21 November evidence remain historical; the update below separates current reproduction from those earlier claims.
 
 **The architectural contribution:** SupplyPilot connects source evidence, reviewed requirements, technical eligibility, constrained sourcing, exact-payload approval, transactional purchase intent, uncertain-outcome reconciliation, receiving and invoice rechecks. The main engineering challenge is preserving the meaning and authority of a decision as its inputs and operational state change.
 
@@ -307,6 +309,32 @@ The [runbooks][runbooks] correctly treat provider effects as surviving a databas
 A future cloud pilot should record exact source/image/configuration revisions, network and storage boundaries, identity, data permissions, load, cost and restoration outcomes. No production availability, recovery-time objective or monthly cloud cost is established here.
 
 ## 12. Technical walkthrough and next delivery gates
+
+### Three-minute merged architecture example
+
+Tested source: [`11b6204` on main](https://github.com/shah-hussain-bangash/SupplyPilot-AI/commit/11b6204b3d7fcc50941e7c1d67d392cc62bac76e), including merged [PR #16](https://github.com/shah-hussain-bangash/SupplyPilot-AI/pull/16). [Reproduction evidence](evidence/procurement-demo-2026-11-24.json) records scope and limitations.
+
+| Time | Show and explain |
+|---|---|
+| 0:00–1:00 · Business flow | In the fresh synthetic seed, technical staff review Gulf and Desert quotes. Buyer saves the AED 7,250 sourcing plan: 30 Gulf pieces at AED 120 + AED 5 freight, and 25 Desert pieces at AED 128 + AED 12 freight. A separate manager approves its exact payload. Buyer queues it, simulates a provider timeout, then reconciles the same intent to one confirmed simulator purchase. |
+| 1:00–2:00 · Persistence decision | `records` remains the authoritative aggregate write path. Migration-owned triggers synchronize procurement projections inside the same transaction; read adapters retain API identity/history while using normalized fields. Outbox intent, audit, reservations and quote consumption commit together. An uncertain provider effect is reconciled, not blindly purchased again. `0011` adds document metadata and ordered parsed pages; uploaded file bytes stay on their existing path. |
+| 2:00–3:00 · Isolation and recovery | Open the [fresh PostgreSQL job](https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45172664175/job/138231976243): no tenant context hides rows, another tenant cannot see the purchase, runtime projections are read-only, and dump/restore checks preserve rows, definitions and restored permissions. Close the browser example at 55 accepted pieces, two matched material invoices and AED 7,250. These are synthetic controls and outcomes, not measured savings or production recovery certification. |
+
+**Reproduce from a clean disposable checkout** at the pinned revision (setup is outside the three-minute narration). Use Python with `backend/requirements.txt` installed and Node/npm for the browser runner:
+
+```powershell
+git switch --detach 11b6204b3d7fcc50941e7c1d67d392cc62bac76e
+python scripts/test_browser.py --prepare --output test-results/architecture-demo
+python scripts/test_postgres.py --docker --concurrency --restore-check --report test-results/postgresql-demo.json
+```
+
+The browser command creates a fresh temporary SQLite database, synthetic accounts and loopback server; it removes the server and temporary data afterward. Its report and closed-order screenshot remain under `test-results/architecture-demo`. The PostgreSQL command creates and removes its own PostgreSQL 17 container with random credentials and port, and restores a dump into a second disposable database. Neither command accepts the working development database as its target. Reproduction creates new order IDs; it does not reopen the existing development order.
+
+**Observed:** the local real-browser/API run passed 27 checks. The [hosted PostgreSQL rerun, attempt 2](https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45172664175/attempts/2), passed on `11b6204`. The historical **957 PostgreSQL checks** belong to the original [PR #16 CI run](https://github.com/shah-hussain-bangash/SupplyPilot-AI/actions/runs/45171318136/job/137681289893), tested at [`0bc9865`](https://github.com/shah-hussain-bangash/SupplyPilot-AI/commit/0bc986558e8a0f5eb7ec925f2d4362fb1f48e39e); that count is not a new certification or pytest count.
+
+**Limits and dependency:** local Docker access was denied at `npipe:////./pipe/docker_engine`, so the connected hosted PostgreSQL job supplied the fresh database evidence. The main merge run still reports a browser failure from attempt 1 (receipt-row locator timeout); the local walkthrough passed without reproducing it. This update does not claim an all-green main workflow or fix an unconfirmed product regression. Browser SQLite coverage and PostgreSQL integration coverage remain separate. Restore reuses roles in one disposable cluster and does not restore uploaded files or external provider state. Live ERP, email and payments remain disconnected.
+
+**Browser-test follow-up ([PR #17](https://github.com/shah-hussain-bangash/SupplyPilot-AI/pull/17)):** the initial PR run also read invoice revision 1 just after a successful revision 2 recheck. Its acceptance helper now waits for the saved mutation response to be rendered and checks the inspected record ID/revision. Application code is unchanged. The revised helper passed 27 local browser checks normally and 27 with real invoice-list requests delayed by 400 ms. Use PR #17's reviewed head (`gh pr checkout 17` in a disposable checkout) to exercise this follow-up; the commands above intentionally retain the original pinned baseline. Historical run failures remain visible in the evidence record.
 
 A ten-minute demonstration can connect business judgment to executable engineering:
 
