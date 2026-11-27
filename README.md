@@ -1,5 +1,7 @@
 # SupplyPilot AI
 
+**Start here for the captured demo:** Use the [local setup at `48bb8bd`](https://github.com/shah-hussain-bangash/SupplyPilot-AI/blob/48bb8bda4356fc341de01b34683517b71f2151d6/README.md#run-a-fresh-windows-demo) and the [browser acceptance instructions for that revision](https://github.com/shah-hussain-bangash/SupplyPilot-AI/blob/48bb8bda4356fc341de01b34683517b71f2151d6/README.md#browser-acceptance). The [portal screenshots](#running-portal) and documented 55 Chromium checks refer to that same development revision.
+
 **B2B procurement and supplier collaboration for industrial materials.**
 
 **Featured case study:** [SupplyPilot AI case study on controlled sourcing, purchasing and fulfillment](docs/case-study/SUPPLYPILOT_CASE_STUDY.md). Explore the architecture, optimization model, exact-payload approval, timeout reconciliation, invoice rechecks, verified PostgreSQL/CI evidence and enterprise delivery gates.
