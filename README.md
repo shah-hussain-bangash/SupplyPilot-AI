@@ -10,37 +10,33 @@ A full-stack engineering project connecting document review, supplier quotations
 
 ## Running portal
 
-Captured on 27 November 2026 from the [current application source](https://github.com/shah-hussain-bangash/supplypilot-ai/tree/11b6204b3d7fcc50941e7c1d67d392cc62bac76e). The browser run used synthetic industrial-materials data in a disposable SQLite database and exercised the real frontend, API, and local ERP simulator.
+Captured on 27 November 2026 from the redesigned portal and document features in the [latest available source branch](https://github.com/shah-hussain-bangash/SupplyPilot-AI/tree/48bb8bda4356fc341de01b34683517b71f2151d6). This development branch includes work ahead of `main`. The application ran locally against a disposable SQLite database using synthetic industrial-materials records and the local ERP simulator.
 
 ### Portal sign-in
 
-![SupplyPilot AI portal sign-in with an empty password field](docs/case-study/assets/supplypilot-portal-sign-in.webp)
+![Redesigned SupplyPilot AI sign-in showing warehouse imagery and an empty password field](docs/case-study/assets/supplypilot-latest-sign-in.webp)
 
 ### Buyer workspace
 
-![SupplyPilot AI procurement overview showing the buyer workspace and current work](docs/case-study/assets/supplypilot-buyer-overview.webp)
+![Redesigned SupplyPilot AI buyer overview showing a completed synthetic order](docs/case-study/assets/supplypilot-latest-overview.webp)
 
-The buyer workspace brings RFQs, quotations, sourcing decisions, and purchasing records together.
+The completed synthetic purchase totals AED 7,250, with 55 pieces accepted. The dashboard reflects the recorded order and receipts.
 
-### Sourcing and independent approval
+### Document search and evidence review
 
-![SupplyPilot AI sourcing workspace showing a synthetic AED 7,250 sourcing plan](docs/case-study/assets/supplypilot-sourcing-plan.webp)
+![SupplyPilot AI document search displaying an exact source citation for a synthetic document](docs/case-study/assets/supplypilot-latest-document-search.webp)
 
-The sourcing run produced a synthetic AED 7,250 plan. The buyer could propose the plan, and a separate manager account approved it.
+Document search returns permission-scoped source evidence and opens the cited source in the review workspace.
 
-![SupplyPilot AI manager approval workspace showing the pending sourcing decision](docs/case-study/assets/supplypilot-manager-approval.webp)
+![SupplyPilot AI field review with extracted values, source text and technical reviewer history](docs/case-study/assets/supplypilot-latest-field-review.webp)
 
-### Purchase reconciliation and invoice review
+A technical reviewer can accept, correct, or reject a field. In this run, the corrected value and original extraction remained visible with their review history. The browser also verified the original source download against the document revision.
 
-![SupplyPilot AI purchase orders workspace showing the confirmed result after reconciliation](docs/case-study/assets/supplypilot-purchase-reconciliation.webp)
+### Manager approval
 
-The simulated ERP timeout left the purchase outcome uncertain. Reconciliation confirmed the existing purchase.
+![Redesigned SupplyPilot AI manager workspace showing an approval request for the synthetic sourcing plan](docs/case-study/assets/supplypilot-latest-manager-approval.webp)
 
-![SupplyPilot AI invoices workspace showing the matched invoice after recheck](docs/case-study/assets/supplypilot-invoice-recheck.webp)
-
-Finance rechecked the invoice after the missing receipt was recorded. The invoice became matched and retained its earlier mismatch in the assessment history.
-
-The browser run passed **27 checks** across 18 buyer screens and seven roles, including role separation, supplier visibility, and order closure.
+A separate manager approved the sourcing decision. The browser workflow then verified timeout reconciliation, receiving, invoice mismatch and recheck, and order closure. The current branch passed **55 Chromium checks** across 18 buyer screens and seven roles.
 
 ## Workflow
 
