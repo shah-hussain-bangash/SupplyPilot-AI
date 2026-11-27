@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage, release/phase-1-validation, feature/customer-quote-relational-reads, feature/local-ocr-foundation, feature/evidence-review-workspace, feature/source-bound-field-reviews, feature/permissioned-document-search]
+    branches: [main, feature/document-job-storage, feature/document-job-relational-reads, feature/customer-quote-storage, release/phase-1-validation, feature/customer-quote-relational-reads, feature/local-ocr-foundation, feature/evidence-review-workspace, feature/source-bound-field-reviews, feature/permissioned-document-search, feature/verified-original-source]
   workflow_dispatch:
 
 permissions:

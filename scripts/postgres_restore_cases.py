@@ -46,14 +46,14 @@ def restore_checks(docker,container,admin_args,runtime_password,check,case):
         check(restored_hashes[table]==before[table],table+' restores every logical row and row count')
     for label,query in CATALOG_CHECKS.items():
         check(rows(restored,query)==definitions[label],label+' restored exactly')
-    check(rows(restored,'SELECT version_num FROM public.alembic_version')==[('0013_proc_customer_quotes',)],
+    check(rows(restored,'SELECT version_num FROM public.alembic_version')==[('0014_evidence_review_history',)],
           'Restored database retains the migration revision')
     check(rows(restored,'SELECT status,total::text FROM public.proc_orders WHERE id=%s',
           (case['order_id'],))==[('closed','7250.00')],
           'Restored closed order retains its exact AED 7250 total')
     check(rows(restored,"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-               "WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")==[(21,)],
-          'Restored database forces RLS on all 21 tenant tables')
+               "WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")==[(22,)],
+          'Restored database forces RLS on all 22 tenant tables')
 
     runtime_args=dict(admin_args,dbname=restored,user='supplypilot_app',password=runtime_password)
     tenant_tables=[t for t in tables if t!='alembic_version']
@@ -85,6 +85,10 @@ def restore_checks(docker,container,admin_args,runtime_password,check,case):
               'Restored migration version table remains protected')
     check(table_hashes(source,tables)==before,'Restore drill leaves every source row unchanged')
     check(table_hashes(restored,tables)==restored_hashes,'Restored permission checks leave all restored rows unchanged')
+    from postgres_review_history_cases import legacy_failure_checks
+    legacy_failure_checks(docker,container,admin_args,archive,check)
+    check(table_hashes(source,tables)==before,'Negative migration clones leave the source database unchanged')
+    check(table_hashes(restored,tables)==restored_hashes,'Negative migration clones leave the verified restore unchanged')
 
 CATALOG_CHECKS = {'Column definitions': 'SELECT '
                        "table_name,column_name,ordinal_position,data_type,udt_name,is_nullable,COALESCE(column_default,'') "

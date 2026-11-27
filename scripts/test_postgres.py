@@ -218,7 +218,7 @@ def main():
             before_customer_quotes=row_hashes()
             with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
                  patch('getpass.getpass',return_value=migrator_password):
-                command.upgrade(cfg,'head')
+                command.upgrade(cfg,'0013_proc_customer_quotes')
             check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
                   '0013_proc_customer_quotes','Database applies customer-quote storage through Alembic')
             tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
@@ -229,9 +229,25 @@ def main():
             prepared_quote_id=prepared_quote['id']
             check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_customer_quotes q JOIN records r ON r.tenant=q.tenant AND r.id=q.id WHERE q.id='{prepared_quote_id}' AND q.source_snapshot=r.data::jsonb AND q.source_revision=r.revision AND NOT q.sent")=='1',
                   'Pre-existing API quote backfills its complete unsent commercial snapshot and revision')
+            from postgres_review_history_cases import prepare_history,history_checks
+            with TestClient(app,client=('127.0.0.3',50002)) as review_client:
+                prepared_review_ids=prepare_history(review_client,portal_password,check)
+            before_reviews=row_hashes()
+            with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+                 patch('getpass.getpass',return_value=migrator_password):
+                command.upgrade(cfg,'head')
+            check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+                  '0014_evidence_review_history','Database applies immutable review history through Alembic')
+            tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            check(len(tables)==23,'Review history upgrade creates the 23-table checkpoint')
+            after_reviews=row_hashes()
+            check(all(after_reviews[t]==v for t,v in before_reviews.items() if t!='alembic_version'),
+                  'Review history migration preserves every pre-existing tenant row')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM proc_evidence_reviews p JOIN records r ON r.tenant=p.tenant AND r.id=p.document_id WHERE p.document_revision<r.revision")=='2',
+                  'Backfill preserves historical source revisions without rewriting decisions')
             tenant_tables=[t for t in tables if t!='alembic_version']
-            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='21',
-                  'All 21 tenant tables have enabled and forced RLS')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='22',
+                  'All 22 tenant tables have enabled and forced RLS')
             with engine.connect() as runtime:
                 role=runtime.execute(text('SELECT current_user')).scalar_one()
                 check(role=='supplypilot_app','Workflow uses the restricted runtime role')
@@ -287,15 +303,16 @@ def main():
             document_job_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             from postgres_customer_quote_cases import customer_quote_checks
             customer_quote_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
+            history_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             if args.restore_check:
                 from postgres_restore_cases import restore_checks
                 restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
-                'checks':passed,'revision':'0013_proc_customer_quotes',
+                'checks':passed,'revision':'0014_evidence_review_history',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True,'document_storage_checked':True,'document_job_storage_checked':True,'customer_quote_storage_checked':True},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True,'document_storage_checked':True,'document_job_storage_checked':True,'customer_quote_storage_checked':True,'review_history_checked':True},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
