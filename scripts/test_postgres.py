@@ -176,7 +176,7 @@ def main():
             before_documents=row_hashes()
             with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
                  patch('getpass.getpass',return_value=migrator_password):
-                command.upgrade(cfg,'head')
+                command.upgrade(cfg,'0011_proc_documents')
             check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
                   '0011_proc_documents','Database applies document storage through Alembic')
             tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
@@ -188,9 +188,24 @@ def main():
                   'Pre-existing reviewable API document is backfilled')
             check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_documents WHERE id='{quarantined_document_id}' AND status='quarantined'")=='1',
                   'Pre-existing quarantined API document is backfilled')
+            before_document_jobs=row_hashes()
+            check(sql('supplypilot_dev',f"SELECT count(*) FROM records WHERE kind='job' AND data->>'document_id'='{prepared_document_id}'")=='1',
+                  'Real API extraction job exists before document-job upgrade')
+            with patch.dict(os.environ,{'SUPPLYPILOT_DB_PORT':str(port)}), \
+                 patch('getpass.getpass',return_value=migrator_password):
+                command.upgrade(cfg,'head')
+            check(sql('supplypilot_dev','SELECT version_num FROM public.alembic_version')==
+                  '0012_proc_document_jobs','Database applies document-job storage through Alembic')
+            tables=sql('supplypilot_dev',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            check(len(tables)==21,'Document-job upgrade creates the 21-table checkpoint')
+            after_document_jobs=row_hashes()
+            check(all(after_document_jobs[t]==v for t,v in before_document_jobs.items() if t!='alembic_version'),
+                  'Document-job migration preserves every pre-existing tenant row')
+            check(sql('supplypilot_dev',f"SELECT count(*) FROM proc_document_jobs j JOIN records r ON r.tenant=j.tenant AND r.id=j.id WHERE j.document_id='{prepared_document_id}' AND j.state='completed' AND j.result=r.data::jsonb->'result' AND j.source_revision=r.revision")=='1',
+                  'Pre-existing API extraction job backfills its complete result and revision')
             tenant_tables=[t for t in tables if t!='alembic_version']
-            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='19',
-                  'All 19 tenant tables have enabled and forced RLS')
+            check(sql('supplypilot_dev',"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity")=='20',
+                  'All 20 tenant tables have enabled and forced RLS')
             with engine.connect() as runtime:
                 role=runtime.execute(text('SELECT current_user')).scalar_one()
                 check(role=='supplypilot_app','Workflow uses the restricted runtime role')
@@ -239,15 +254,17 @@ def main():
             exception_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             from postgres_document_cases import document_checks
             document_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
+            from postgres_document_job_cases import document_job_checks
+            document_job_checks(sql,dict(connection_args,user='supplypilot_app',password=runtime_password),check)
             if args.restore_check:
                 from postgres_restore_cases import restore_checks
                 restore_checks(docker,name,connection_args,runtime_password,check,case)
             engine.dispose();engine=None
         if args.report:
             args.report.write_text(json.dumps({'result':'passed','checks_passed':len(passed),
-                'checks':passed,'revision':'0011_proc_documents',
+                'checks':passed,'revision':'0012_proc_document_jobs',
                 'database_scope':'new disposable PostgreSQL 17 container; synthetic data only',
-                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True,'document_storage_checked':True},indent=2),encoding='utf-8')
+                'concurrency_checked':args.concurrency,'restore_checked':args.restore_check,'inventory_checked':True,'plan_storage_checked':True,'exception_storage_checked':True,'document_storage_checked':True,'document_job_storage_checked':True},indent=2),encoding='utf-8')
         print('POSTGRESQL ACCEPTANCE PASSED')
         print('Checks passed:',len(passed))
     finally:
