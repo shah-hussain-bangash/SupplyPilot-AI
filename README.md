@@ -36,7 +36,29 @@ A technical reviewer can accept, correct, or reject a field. In this run, the co
 
 ![Redesigned SupplyPilot AI manager workspace showing an approval request for the synthetic sourcing plan](docs/case-study/assets/supplypilot-latest-manager-approval.webp)
 
-A separate manager approved the sourcing decision. The browser workflow then verified timeout reconciliation, receiving, invoice mismatch and recheck, and order closure. The current branch passed **55 Chromium checks** across 18 buyer screens and seven roles.
+Only the manager role could approve the reviewed sourcing decision. The buyer then queued the approved purchase.
+
+### ERP timeout reconciliation
+
+![SupplyPilot purchase orders showing confirmed execution after a simulated ERP timeout](docs/case-study/assets/supplypilot-latest-reconciled-execution.webp)
+
+The simulated timeout left the outcome uncertain. The buyer reconciled the existing execution, and SupplyPilot marked it confirmed before receiving began.
+
+### Warehouse inspection
+
+![SupplyPilot receiving workspace after recording an inspected receipt for 30 accepted pieces](docs/case-study/assets/supplypilot-latest-inspected-receipt.webp)
+
+The warehouse recorded 30 accepted pieces for the first supplier allocation. The two inspected receipts eventually accounted for all 55 pieces on the order.
+
+### Invoice recheck
+
+![SupplyPilot invoice workspace showing the matched result after an invoice recheck](docs/case-study/assets/supplypilot-latest-invoice-recheck.webp)
+
+Finance initially recorded a mismatch for `INV-002` because the second receipt was missing. After receiving was recorded, a recheck matched revision 2 of the same invoice and preserved the earlier assessment. The buyer then closed the order.
+
+### Verification scope
+
+The [captured development revision](https://github.com/shah-hussain-bangash/SupplyPilot-AI/tree/48bb8bda4356fc341de01b34683517b71f2151d6) passed **55 Chromium checks** across 18 buyer screens and seven roles, including supplier visibility and the auditor's view of order closure. Follow [Browser acceptance](#browser-acceptance) from that revision to reproduce the pictured workflow. The instructions and migration details below describe `main`.
 
 ## Workflow
 
