@@ -2,28 +2,54 @@
 
 **B2B procurement and supplier collaboration for industrial materials.**
 
-**Featured case study:** [SupplyPilot AI Case Study â€” controlled sourcing, purchasing and fulfillment](docs/case-study/SUPPLYPILOT_CASE_STUDY.md). Explore the architecture, optimization model, exact-payload approval, timeout reconciliation, invoice rechecks, verified PostgreSQL/CI evidence and enterprise delivery gates.
+**Featured case study:** [SupplyPilot AI case study on controlled sourcing, purchasing and fulfillment](docs/case-study/SUPPLYPILOT_CASE_STUDY.md). Explore the architecture, optimization model, exact-payload approval, timeout reconciliation, invoice rechecks, verified PostgreSQL/CI evidence and enterprise delivery gates.
 
 A full-stack engineering project connecting document review, supplier quotations, sourcing decisions, approvals, purchasing, receiving, invoice matching, and audit history.
 
 > Development prototype. Supplier records are synthetic and external purchasing uses a local ERP simulator. This is not a production procurement service.
 
+## Running portal
+
+Captured on 27 November 2026 from the [current application source](https://github.com/shah-hussain-bangash/supplypilot-ai/tree/11b6204b3d7fcc50941e7c1d67d392cc62bac76e). The browser run used synthetic industrial-materials data in a disposable SQLite database and exercised the real frontend, API, and local ERP simulator.
+
+### Portal sign-in
+
+![SupplyPilot AI portal sign-in with an empty password field](docs/case-study/assets/supplypilot-portal-sign-in.webp)
+
+### Buyer workspace
+
+![SupplyPilot AI procurement overview showing the buyer workspace and current work](docs/case-study/assets/supplypilot-buyer-overview.webp)
+
+The buyer workspace brings RFQs, quotations, sourcing decisions, and purchasing records together.
+
+### Sourcing and independent approval
+
+![SupplyPilot AI sourcing workspace showing a synthetic AED 7,250 sourcing plan](docs/case-study/assets/supplypilot-sourcing-plan.webp)
+
+The sourcing run produced a synthetic AED 7,250 plan. The buyer could propose the plan, and a separate manager account approved it.
+
+![SupplyPilot AI manager approval workspace showing the pending sourcing decision](docs/case-study/assets/supplypilot-manager-approval.webp)
+
+### Purchase reconciliation and invoice review
+
+![SupplyPilot AI purchase orders workspace showing the confirmed result after reconciliation](docs/case-study/assets/supplypilot-purchase-reconciliation.webp)
+
+The simulated ERP timeout left the purchase outcome uncertain. Reconciliation confirmed the existing purchase.
+
+![SupplyPilot AI invoices workspace showing the matched invoice after recheck](docs/case-study/assets/supplypilot-invoice-recheck.webp)
+
+Finance rechecked the invoice after the missing receipt was recorded. The invoice became matched and retained its earlier mismatch in the assessment history.
+
+The browser run passed **27 checks** across 18 buyer screens and seven roles, including role separation, supplier visibility, and order closure.
+
 ## Workflow
 
-```mermaid
-flowchart LR
-    A[Upload source] --> B[Review RFQ]
-    B --> C[Invite suppliers]
-    C --> D[Submit quotations]
-    D --> E[Technical review]
-    E --> F[Optimize sourcing]
-    F --> G[Manager approval]
-    G --> H[Queue purchase]
-    H --> I[Dispatch or reconcile]
-    I --> J[Receive and inspect]
-    J --> K[Match or recheck invoices]
-    K --> L[Close order]
-```
+| Stage | Workflow |
+| --- | --- |
+| Intake | Upload the source, review the RFQ, and invite suppliers. |
+| Sourcing | Collect quotations, complete technical review, and optimize the sourcing plan. |
+| Purchasing | Obtain manager approval, queue the approved order, and dispatch or reconcile it. |
+| Fulfillment | Receive and inspect materials, match or recheck invoices, and close the order. |
 
 ## Implemented capabilities
 
